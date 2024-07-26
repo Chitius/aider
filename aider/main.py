@@ -297,6 +297,13 @@ def register_litellm_models(git_root, model_metadata_fname, io):
 
 
 def main(argv=None, input=None, output=None, force_git_root=None, return_coder=False):
+    # 打印所有输入参数
+    print("argv: ", argv)
+    print("input: ", input)
+    print("output: ", output)
+    print("force_git_root: ", force_git_root)
+    print("return_coder: ", return_coder)
+    print("sys.argv[1:]: ", sys.argv[1:])
     if argv is None:
         argv = sys.argv[1:]
 
@@ -316,7 +323,7 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
     default_config_files = list(map(str, default_config_files))
 
     parser = get_parser(default_config_files, git_root)
-    args, unknown = parser.parse_known_args(argv)
+    args, _ = parser.parse_known_args(argv)
 
     # Load the .env file specified in the arguments
     loaded_dotenvs = load_dotenv_files(git_root, args.env_file)

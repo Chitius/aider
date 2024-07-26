@@ -128,6 +128,8 @@ class Coder:
 
             kwargs = use_kwargs
 
+        # chuan: language 应该在 kwargs 里添加
+
         if edit_format == "diff":
             res = EditBlockCoder(main_model, io, **kwargs)
         elif edit_format == "diff-fenced":
