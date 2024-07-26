@@ -240,8 +240,8 @@ Aliases:
   - `--no-stream`
 
 ### `--user-input-color VALUE`
-Set the color for user input (default: #00cc00)  
-Default: #00cc00  
+Set the color for user input (default: light_green)  
+Default: light_green
 Environment variable: `AIDER_USER_INPUT_COLOR`  
 
 ### `--tool-output-color VALUE`
@@ -250,12 +250,12 @@ Environment variable: `AIDER_TOOL_OUTPUT_COLOR`
 
 ### `--tool-error-color VALUE`
 Set the color for tool error messages (default: red)  
-Default: #FF2222  
+Default: light_red  
 Environment variable: `AIDER_TOOL_ERROR_COLOR`  
 
 ### `--assistant-output-color VALUE`
-Set the color for assistant output (default: #0088ff)  
-Default: #0088ff  
+Set the color for assistant output (default: light_blue)  
+Default: light_blue  
 Environment variable: `AIDER_ASSISTANT_OUTPUT_COLOR`  
 
 ### `--code-theme VALUE`

@@ -168,17 +168,17 @@ cog.outl("```")
 ## Enable/disable streaming responses (default: True)
 #AIDER_STREAM=true
 
-## Set the color for user input (default: #00cc00)
-#AIDER_USER_INPUT_COLOR=#00cc00
+## Set the color for user input (default: light_green)
+#AIDER_USER_INPUT_COLOR=light_green
 
 ## Set the color for tool output (default: None)
 #AIDER_TOOL_OUTPUT_COLOR=
 
 ## Set the color for tool error messages (default: red)
-#AIDER_TOOL_ERROR_COLOR=#FF2222
+#AIDER_TOOL_ERROR_COLOR=light_red
 
-## Set the color for assistant output (default: #0088ff)
-#AIDER_ASSISTANT_OUTPUT_COLOR=#0088ff
+## Set the color for assistant output (default: light_blue)
+#AIDER_ASSISTANT_OUTPUT_COLOR=light_blue
 
 ## Set the markdown code theme (default: default, other options include monokai, solarized-dark, solarized-light)
 #AIDER_CODE_THEME=default

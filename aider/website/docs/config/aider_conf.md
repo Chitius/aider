@@ -161,17 +161,17 @@ cog.outl("```")
 ## Enable/disable streaming responses (default: True)
 #stream: true
 
-## Set the color for user input (default: #00cc00)
-#user-input-color: #00cc00
+## Set the color for user input (default: light_green)
+#user-input-color: light_green
 
 ## Set the color for tool output (default: None)
 #tool-output-color:
 
 ## Set the color for tool error messages (default: red)
-#tool-error-color: #FF2222
+#tool-error-color: light_red
 
-## Set the color for assistant output (default: #0088ff)
-#assistant-output-color: #0088ff
+## Set the color for assistant output (default: light_blue)
+#assistant-output-color: light_blue
 
 ## Set the markdown code theme (default: default, other options include monokai, solarized-dark, solarized-light)
 #code-theme: default

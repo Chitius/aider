@@ -128,7 +128,7 @@ class Coder:
 
             kwargs = use_kwargs
 
-        # chuan: language 应该在 kwargs 里添加
+        print("edit_format:", edit_format)
 
         if edit_format == "diff":
             res = EditBlockCoder(main_model, io, **kwargs)
@@ -215,7 +215,7 @@ class Coder:
         dry_run=False,
         map_tokens=1024,
         verbose=False,
-        assistant_output_color="blue",
+        assistant_output_color="light_blue",
         code_theme="default",
         stream=True,
         use_git=True,
@@ -235,6 +235,7 @@ class Coder:
         aider_commit_hashes=None,
         map_mul_no_files=8,
         verify_ssl=True,
+        language=True,
     ):
         if not fnames:
             fnames = []
@@ -289,6 +290,11 @@ class Coder:
 
         self.commands = Commands(self.io, self, voice_language, verify_ssl=verify_ssl)
 
+        if language.lower() in ['zh', 'en']:
+            self.language = language
+        else:
+            self.language = 'en'
+
         if use_git:
             try:
                 self.repo = GitRepo(
@@ -328,13 +334,13 @@ class Coder:
             self.find_common_root()
 
         max_inp_tokens = self.main_model.info.get("max_input_tokens") or 0
-        if main_model.use_repo_map and self.repo and self.gpt_prompts.repo_content_prefix:
+        if main_model.use_repo_map and self.repo and self.gpt_prompts.repo_content_prefix[self.language]:
             self.repo_map = RepoMap(
                 map_tokens,
                 self.root,
                 self.main_model,
                 io,
-                self.gpt_prompts.repo_content_prefix,
+                self.gpt_prompts.repo_content_prefix[self.language],
                 self.verbose,
                 max_inp_tokens,
                 map_mul_no_files=map_mul_no_files,
@@ -562,14 +568,14 @@ class Coder:
             ]
 
         if self.abs_fnames:
-            files_content = self.gpt_prompts.files_content_prefix
+            files_content = self.gpt_prompts.files_content_prefix[self.language]
             files_content += self.get_files_content()
             files_reply = "Ok, any changes I propose will be to those files."
         elif repo_content:
-            files_content = self.gpt_prompts.files_no_full_files_with_repo_map
-            files_reply = self.gpt_prompts.files_no_full_files_with_repo_map_reply
+            files_content = self.gpt_prompts.files_no_full_files_with_repo_map[self.language]
+            files_reply = self.gpt_prompts.files_no_full_files_with_repo_map_reply[self.language]
         else:
-            files_content = self.gpt_prompts.files_no_full_files
+            files_content = self.gpt_prompts.files_no_full_files[self.language]
             files_reply = "Ok."
 
         if files_content:
@@ -652,12 +658,7 @@ class Coder:
                 return
 
     def run_loop(self):
-        inp = self.io.get_input(
-            self.root,
-            self.get_inchat_relative_files(),
-            self.get_addable_relative_files(),
-            self.commands,
-        )
+        inp = self.io.get_input(self.commands)
 
         if not inp:
             return
@@ -736,7 +737,7 @@ class Coder:
         self.cur_messages = []
 
     def fmt_system_prompt(self, prompt):
-        lazy_prompt = self.gpt_prompts.lazy_prompt if self.main_model.lazy else ""
+        lazy_prompt = self.gpt_prompts.lazy_prompt[self.language] if self.main_model.lazy else ""
 
         platform_text = f"- The user's system: {platform.platform()}\n"
         if os.name == "nt":
@@ -758,26 +759,26 @@ class Coder:
 
     def format_messages(self):
         self.choose_fence()
-        main_sys = self.fmt_system_prompt(self.gpt_prompts.main_system)
+        main_sys = self.fmt_system_prompt(self.gpt_prompts.main_system[self.language])
 
         example_messages = []
         if self.main_model.examples_as_sys_msg:
-            if self.gpt_prompts.example_messages:
+            if self.gpt_prompts.example_messages[self.language]:
                 main_sys += "\n# Example conversations:\n\n"
-            for msg in self.gpt_prompts.example_messages:
+            for msg in self.gpt_prompts.example_messages[self.language]:
                 role = msg["role"]
                 content = self.fmt_system_prompt(msg["content"])
                 main_sys += f"## {role.upper()}: {content}\n\n"
             main_sys = main_sys.strip()
         else:
-            for msg in self.gpt_prompts.example_messages:
+            for msg in self.gpt_prompts.example_messages[self.language]:
                 example_messages.append(
                     dict(
                         role=msg["role"],
                         content=self.fmt_system_prompt(msg["content"]),
                     )
                 )
-            if self.gpt_prompts.example_messages:
+            if self.gpt_prompts.example_messages[self.language]:
                 example_messages += [
                     dict(
                         role="user",
@@ -789,7 +790,7 @@ class Coder:
                     dict(role="assistant", content="Ok."),
                 ]
 
-        main_sys += "\n" + self.fmt_system_prompt(self.gpt_prompts.system_reminder)
+        main_sys += "\n" + self.fmt_system_prompt(self.gpt_prompts.system_reminder[self.language])
         messages = [
             dict(role="system", content=main_sys),
         ]
@@ -800,7 +801,7 @@ class Coder:
         messages += self.get_files_messages()
 
         reminder_message = [
-            dict(role="system", content=self.fmt_system_prompt(self.gpt_prompts.system_reminder)),
+            dict(role="system", content=self.fmt_system_prompt(self.gpt_prompts.system_reminder[self.language])),
         ]
 
         # TODO review impact of token count on image messages
@@ -828,7 +829,7 @@ class Coder:
                 new_content = (
                     final["content"]
                     + "\n\n"
-                    + self.fmt_system_prompt(self.gpt_prompts.system_reminder)
+                    + self.fmt_system_prompt(self.gpt_prompts.system_reminder[self.language])
                 )
                 messages[-1] = dict(role=final["role"], content=new_content)
 
@@ -848,10 +849,14 @@ class Coder:
 
         self.multi_response_content = ""
         if self.show_pretty() and self.stream:
-            mdargs = dict(style=self.assistant_output_color, code_theme=self.code_theme)
+            use_color_hex = "#0088ff"
+            if self.assistant_output_color == "light_blue":
+                use_color_hex = "#0088ff"
+            mdargs = dict(style=use_color_hex, code_theme=self.code_theme)
             self.mdstream = MarkdownStream(mdargs=mdargs)
         else:
             self.mdstream = None
+
 
         exhausted = False
         interrupted = False
@@ -952,7 +957,7 @@ class Coder:
             if self.repo and self.auto_commits and not self.dry_run:
                 saved_message = self.auto_commit(edited)
             elif hasattr(self.gpt_prompts, "files_content_gpt_edits_no_repo"):
-                saved_message = self.gpt_prompts.files_content_gpt_edits_no_repo
+                saved_message = self.gpt_prompts.files_content_gpt_edits_no_repo[self.language]
             else:
                 saved_message = None
 
@@ -1186,13 +1191,16 @@ class Coder:
 
         show_resp = self.render_incremental_response(True)
         if self.show_pretty():
+            if self.assistant_output_color == "light_blue":
+                use_color_hex = "#0088ff"
             show_resp = Markdown(
-                show_resp, style=self.assistant_output_color, code_theme=self.code_theme
+                show_resp, style=use_color_hex, code_theme=self.code_theme
             )
+            self.io.console.print(show_resp)
         else:
             show_resp = Text(show_resp or "<no response>")
+            self.io.print(show_resp, color = self.assistant_output_color)
 
-        self.io.console.print(show_resp)
 
         if tokens is not None:
             self.io.tool_output(tokens)
@@ -1495,13 +1503,13 @@ class Coder:
             if self.show_diffs:
                 self.commands.cmd_diff()
 
-            return self.gpt_prompts.files_content_gpt_edits.format(
+            return self.gpt_prompts.files_content_gpt_edits[self.language].format(
                 hash=commit_hash,
                 message=commit_message,
             )
 
         self.io.tool_output("No changes made to git tracked files.")
-        return self.gpt_prompts.files_content_gpt_no_edits
+        return self.gpt_prompts.files_content_gpt_no_edits[self.language]
 
     def dirty_commit(self):
         if not self.need_commit_before_edits:
@@ -1514,5 +1522,5 @@ class Coder:
         self.repo.commit(fnames=self.need_commit_before_edits)
 
         # files changed, move cur messages back behind the files messages
-        # self.move_back_cur_messages(self.gpt_prompts.files_content_local_edits)
+        # self.move_back_cur_messages(self.gpt_prompts.files_content_local_edits[self.language])
         return True

@@ -17,7 +17,7 @@ class WholeFileCoder(Coder):
     def update_cur_messages(self, edited):
         if edited:
             self.cur_messages += [
-                dict(role="assistant", content=self.gpt_prompts.redacted_edit_message)
+                dict(role="assistant", content=self.gpt_prompts.redacted_edit_message[self.language])
             ]
         else:
             self.cur_messages += [dict(role="assistant", content=self.partial_response_content)]

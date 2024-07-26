@@ -298,12 +298,12 @@ def register_litellm_models(git_root, model_metadata_fname, io):
 
 def main(argv=None, input=None, output=None, force_git_root=None, return_coder=False):
     # 打印所有输入参数
-    print("argv: ", argv)
-    print("input: ", input)
-    print("output: ", output)
-    print("force_git_root: ", force_git_root)
-    print("return_coder: ", return_coder)
-    print("sys.argv[1:]: ", sys.argv[1:])
+    # print("argv: ", argv)
+    # print("input: ", input)
+    # print("output: ", output)
+    # print("force_git_root: ", force_git_root)
+    # print("return_coder: ", return_coder)
+    # print("sys.argv[1:]: ", sys.argv[1:])
     if argv is None:
         argv = sys.argv[1:]
 
@@ -336,17 +336,17 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
 
         litellm.client_session = httpx.Client(verify=False)
 
-    if args.dark_mode:
-        args.user_input_color = "#32FF32"
-        args.tool_error_color = "#FF3333"
-        args.assistant_output_color = "#00FFFF"
-        args.code_theme = "monokai"
+    # if args.dark_mode:
+    #     args.user_input_color = "#32FF32"
+    #     args.tool_error_color = "#FF3333"
+    #     args.assistant_output_color = "#00FFFF"
+    #     args.code_theme = "monokai"
 
-    if args.light_mode:
-        args.user_input_color = "green"
-        args.tool_error_color = "red"
-        args.assistant_output_color = "blue"
-        args.code_theme = "default"
+    # if args.light_mode:
+    args.user_input_color = "light_green"
+    args.tool_error_color = "light_red"
+    args.assistant_output_color = "light_blue"
+    args.code_theme = "white"
 
     if return_coder and args.yes is None:
         args.yes = True
@@ -495,6 +495,7 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
             attribute_committer=args.attribute_committer,
             attribute_commit_message=args.attribute_commit_message,
             verify_ssl=args.verify_ssl,
+            language="zh"
         )
 
     except ValueError as err:
