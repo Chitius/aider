@@ -9,7 +9,6 @@ os.environ["OR_APP_NAME"] = "Aider"
 
 # `import litellm` takes 1.5 seconds, defer it!
 
-
 class LazyLiteLLM:
     def __init__(self):
         self._lazy_module = None

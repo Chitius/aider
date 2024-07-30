@@ -126,6 +126,7 @@ def do_replace(fname, content, hunk):
 
     # does it want to make a new file?
     if not fname.exists() and not before_text.strip():
+        print(f"> [debug] create new file {fname}")
         fname.touch()
         content = ""
 

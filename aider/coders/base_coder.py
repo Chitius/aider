@@ -74,13 +74,14 @@ class Coder:
     @classmethod
     def create(
         self,
-        main_model=None,
+        main_model: models.Model = None,
         edit_format=None,
         io=None,
         from_coder=None,
         summarize_from_coder=True,
         **kwargs,
     ):
+        """ 创建并返回 Agent """
         from . import (
             EditBlockCoder,
             EditBlockFencedCoder,
@@ -128,8 +129,6 @@ class Coder:
 
             kwargs = use_kwargs
 
-        print("edit_format:", edit_format)
-
         if edit_format == "diff":
             res = EditBlockCoder(main_model, io, **kwargs)
         elif edit_format == "diff-fenced":
@@ -146,61 +145,6 @@ class Coder:
         res.original_kwargs = dict(kwargs)
 
         return res
-
-    def clone(self, **kwargs):
-        return Coder.create(from_coder=self, **kwargs)
-
-    def get_announcements(self):
-        lines = []
-        lines.append(f"Aider v{__version__}")
-
-        # Model
-        main_model = self.main_model
-        weak_model = main_model.weak_model
-        prefix = "Model:"
-        output = f" {main_model.name} with {self.edit_format} edit format"
-        if weak_model is not main_model:
-            prefix = "Models:"
-            output += f", weak model {weak_model.name}"
-        lines.append(prefix + output)
-
-        # Repo
-        if self.repo:
-            rel_repo_dir = self.repo.get_rel_repo_dir()
-            num_files = len(self.repo.get_tracked_files())
-            lines.append(f"Git repo: {rel_repo_dir} with {num_files:,} files")
-            if num_files > 1000:
-                lines.append(
-                    "Warning: For large repos, consider using an .aiderignore file to ignore"
-                    " irrelevant files/dirs."
-                )
-        else:
-            lines.append("Git repo: none")
-
-        # Repo-map
-        if self.repo_map:
-            map_tokens = self.repo_map.max_map_tokens
-            if map_tokens > 0:
-                lines.append(f"Repo-map: using {map_tokens} tokens")
-                max_map_tokens = 2048
-                if map_tokens > max_map_tokens:
-                    lines.append(
-                        f"Warning: map-tokens > {max_map_tokens} is not recommended as too much"
-                        " irrelevant code can confuse GPT."
-                    )
-            else:
-                lines.append("Repo-map: disabled because map_tokens == 0")
-        else:
-            lines.append("Repo-map: disabled")
-
-        # Files
-        for fname in self.get_inchat_relative_files():
-            lines.append(f"Added {fname} to the chat.")
-
-        if self.done_messages:
-            lines.append("Restored previous conversation history.")
-
-        return lines
 
     def __init__(
         self,
@@ -235,8 +179,18 @@ class Coder:
         aider_commit_hashes=None,
         map_mul_no_files=8,
         verify_ssl=True,
-        language=True,
+        language="en",
     ):
+        """
+        部分参数解释: 
+
+        - main_model: 一个 models.Model 对象，表示 LLM 模型的配置 (不含 API 信息), 
+                      例如 GPT-4o 默认使用什么编辑模式, 是否能接收图像，默认设置多少最大 token, 之类的.
+
+            P.S. 要和 llm 进行实际的交互，其实是通过在 aider.sendchat 里调用 litellm.completion 函数来实现的，并没有一个专门的 LLM Client 对象.
+
+        - io: aider.io.InputOutput 对象，用于输入输出. 和用户的所有交互都要过这个层.
+        """
         if not fnames:
             fnames = []
 
@@ -372,6 +326,7 @@ class Coder:
 
         # validate the functions jsonschema
         if self.functions:
+            print("self.functions: ", self.functions)
             from jsonschema import Draft7Validator
 
             for function in self.functions:
@@ -380,6 +335,61 @@ class Coder:
             if self.verbose:
                 self.io.tool_output("JSON Schema:")
                 self.io.tool_output(json.dumps(self.functions, indent=4))
+
+    def clone(self, **kwargs):
+        return Coder.create(from_coder=self, **kwargs)
+
+    def get_announcements(self):
+        lines = []
+        lines.append(f"Aider v{__version__}")
+
+        # Model
+        main_model = self.main_model
+        weak_model = main_model.weak_model
+        prefix = "Model:"
+        output = f" {main_model.name} with {self.edit_format} edit format"
+        if weak_model is not main_model:
+            prefix = "Models:"
+            output += f", weak model {weak_model.name}"
+        lines.append(prefix + output)
+
+        # Repo
+        if self.repo:
+            rel_repo_dir = self.repo.get_rel_repo_dir()
+            num_files = len(self.repo.get_tracked_files())
+            lines.append(f"Git repo: {rel_repo_dir} with {num_files:,} files")
+            if num_files > 1000:
+                lines.append(
+                    "Warning: For large repos, consider using an .aiderignore file to ignore"
+                    " irrelevant files/dirs."
+                )
+        else:
+            lines.append("Git repo: none")
+
+        # Repo-map
+        if self.repo_map:
+            map_tokens = self.repo_map.max_map_tokens
+            if map_tokens > 0:
+                lines.append(f"Repo-map: using {map_tokens} tokens")
+                max_map_tokens = 2048
+                if map_tokens > max_map_tokens:
+                    lines.append(
+                        f"Warning: map-tokens > {max_map_tokens} is not recommended as too much"
+                        " irrelevant code can confuse GPT."
+                    )
+            else:
+                lines.append("Repo-map: disabled because map_tokens == 0")
+        else:
+            lines.append("Repo-map: disabled")
+
+        # Files
+        for fname in self.get_inchat_relative_files():
+            lines.append(f"Added {fname} to the chat.")
+
+        if self.done_messages:
+            lines.append("Restored previous conversation history.")
+
+        return lines
 
     def setup_lint_cmds(self, lint_cmds):
         if not lint_cmds:
@@ -447,6 +457,7 @@ class Coder:
                 yield fname, content
 
     def choose_fence(self):
+        """ 从 self.fences 中选择一个合适的 fencing 策略，然后更新 self.fence """
         all_content = ""
         for _fname, content in self.get_abs_fnames_content():
             all_content += content + "\n"
@@ -559,18 +570,25 @@ class Coder:
 
         repo_content = self.get_repo_map()
         if repo_content:
+            repo_content_reply = {
+                "en": "Ok, I won't try and edit those files without asking first.",
+                "zh": "好的, 我会在尝试编辑这些文件之前先询问用户."
+            }
             files_messages += [
                 dict(role="user", content=repo_content),
                 dict(
                     role="assistant",
-                    content="Ok, I won't try and edit those files without asking first.",
+                    content=repo_content_reply[self.language],
                 ),
             ]
 
         if self.abs_fnames:
             files_content = self.gpt_prompts.files_content_prefix[self.language]
             files_content += self.get_files_content()
-            files_reply = "Ok, any changes I propose will be to those files."
+            files_reply = {
+                "en": "Ok, any changes I propose will be to those files.",
+                "zh": "好的, 我所提出的任何更改都会被应用于这些文件."
+            }[self.language]
         elif repo_content:
             files_content = self.gpt_prompts.files_no_full_files_with_repo_map[self.language]
             files_reply = self.gpt_prompts.files_no_full_files_with_repo_map_reply[self.language]
@@ -624,38 +642,52 @@ class Coder:
         self.test_outcome = None
         self.edit_outcome = None
 
-    def run(self, with_message=None):
+    def run(self, with_message = None):
+        """
+        主循环方法，负责处理用户消息和反射消息。
+        
+        @param with_message: 可选参数，如果提供，将直接处理该消息而不等待用户输入。
+        """
+        """ Agent 运行的入口 """
         while True:
-            self.init_before_message()
+            self.init_before_message()  # 初始化消息处理前的准备工作
 
             try:
                 if with_message:
+                    # 如果 with_message 不为空，则直接把 with_message 当做用户发送的第一条消息
                     new_user_message = with_message
-                    self.io.user_input(with_message)
+                    self.io.user_input(with_message)  
                 else:
-                    new_user_message = self.run_loop()
+                    # 否则等待并获取用户输入的消息
+                    new_user_message = self.run_loop()  
 
                 while new_user_message:
                     self.reflected_message = None
-                    list(self.send_new_user_message(new_user_message))
 
+                    # 【核心函数】
+                    # 将用户的消息格式化, 并调用 self.send() 将新的 messages 发送给 LLM, 
+                    # ...
+                    list(self.send_new_user_message(new_user_message)) 
+
+                    # 下面在干嘛还有待研究
                     new_user_message = None
                     if self.reflected_message:
                         if self.num_reflections < self.max_reflections:
                             self.num_reflections += 1
-                            new_user_message = self.reflected_message
+                            new_user_message = self.reflected_message  
                         else:
                             self.io.tool_error(
                                 f"Only {self.max_reflections} reflections allowed, stopping."
-                            )
+                            )  
 
                 if with_message:
-                    return self.partial_response_content
+                    # 如果调用时自带 message, 说明是单轮对话，需要直接返回响应.
+                    return self.partial_response_content  #
 
             except KeyboardInterrupt:
-                self.keyboard_interrupt()
+                self.keyboard_interrupt()  # 捕获键盘中断异常，进行相应处理
             except EOFError:
-                return
+                return  # 捕获EOFError，结束循环
 
     def run_loop(self):
         inp = self.io.get_input(self.commands)
@@ -715,6 +747,8 @@ class Coder:
             self.io.tool_output("Finished summarizing chat history.")
 
     def summarize_end(self):
+        """ 等待 summarize 线程将历史信息的摘要添加到对话中, 摘要会被更新为 self.done_messages 中 
+            TODO: 研究这个摘要线程在干嘛 """
         if self.summarizer_thread is None:
             return
 
@@ -758,11 +792,31 @@ class Coder:
         return prompt
 
     def format_messages(self):
-        self.choose_fence()
-        main_sys = self.fmt_system_prompt(self.gpt_prompts.main_system[self.language])
+        """
+        返回要传递给 LLM 的完整 messages.
 
+        messages 依次由如下的若干部分组成:
+
+        1. 系统 message: 说明 agent 的人设、基本思维方式, 以及告诫 agent 你很勤奋.
+        2. Few-shot 示例: 通常情况下, 由若干条 user 和 assistant 交替的预设对话历史组成. 但也可以设置为集成到上一条 system message 中.
+        3. 示例终止 message: 即 {user: "我切换到了一个新的代码仓. 请不要再考虑上述的文件", assistant: "OK."}
+        4. 历史对话摘要 message: 由摘要线程单独提供, 由 weak_model 提供支持. 具体内容和对象有待研究 TODO.
+        5. 仓库结构信息 message (可选): 即 repo-map 信息.
+        6. 文件信息 message: 已经被人为添加到对话中了的所有文件. 无论有多少文件，都放在一条信息中.
+                            如果没有任何文件, 也会添加一段 "user: 我尚未添加任何文件" 之类的话.
+        7. 用户当前轮次的请求信息 messages: 这可能会一次性添加多个 message, 为什么会多个，还有待研究 TODO.
+        8. 返回格式提示 message: 提示 Agent 应该以什么格式输出接下来的内容, 对后面能否正确解析对文件的改动非常重要。
+        """
+        self.choose_fence()     # 更新 self.fence
+
+        # 主要的系统 prompt. fmt_system_prompt 的过程是为了将 prompt 中的花括号块格式化.
+        main_sys: str = self.fmt_system_prompt(self.gpt_prompts.main_system[self.language])
+        
+        # prompt 的 few-shot 部分
         example_messages = []
+
         if self.main_model.examples_as_sys_msg:
+            # 如果在 model 的配置中, 要求了将 示例 prompt 的内容集成地塞在首条 system message 之中
             if self.gpt_prompts.example_messages[self.language]:
                 main_sys += "\n# Example conversations:\n\n"
             for msg in self.gpt_prompts.example_messages[self.language]:
@@ -771,6 +825,7 @@ class Coder:
                 main_sys += f"## {role.upper()}: {content}\n\n"
             main_sys = main_sys.strip()
         else:
+            # 否则, 将每条 示例 prompt 都作为单独的 message.
             for msg in self.gpt_prompts.example_messages[self.language]:
                 example_messages.append(
                     dict(
@@ -778,32 +833,50 @@ class Coder:
                         content=self.fmt_system_prompt(msg["content"]),
                     )
                 )
+
             if self.gpt_prompts.example_messages[self.language]:
+                # 在示例 prompt 的最后添加一条额外 message, 来提示模型现在处在新的代码仓, 从而让模型不要把示例中的代码当前现在真实环境下的代码.
+                example_messages_hint = {
+                    "en": (
+                        "I switched to a new code base. Please don't consider the above files"
+                        " or try to edit them any longer."
+                    ),
+                    "zh": (
+                        "我切换到了一个新的代码仓. 请不要再考虑上述的文件, 也不要再尝试编辑它们."
+                    )
+                }[self.language]
                 example_messages += [
                     dict(
                         role="user",
-                        content=(
-                            "I switched to a new code base. Please don't consider the above files"
-                            " or try to edit them any longer."
-                        ),
+                        content=example_messages_hint,
                     ),
                     dict(role="assistant", content="Ok."),
                 ]
 
+        ### 接下来是构筑 messages 的过程
+        # 首先添加首条 system message
         main_sys += "\n" + self.fmt_system_prompt(self.gpt_prompts.system_reminder[self.language])
         messages = [
             dict(role="system", content=main_sys),
         ]
+
+        # 接着添加示例 message
         messages += example_messages
 
+        # 添加对 之前对话历史 的摘要 message
         self.summarize_end()
         messages += self.done_messages
+
+        # 添加最新的文件的信息到 messages 中. 主要包含 2 部分
+        # 第一部分（似乎默认模式不开启）是 user: repo map info+ assistant： "好的, ...."
+        # 第二部分是 user: 我已经 XXX 文件添加到对话 <文件内容> + assistant: "好的, 我所提出的任何更改都会被应用于这些文件."
         messages += self.get_files_messages()
 
         reminder_message = [
             dict(role="system", content=self.fmt_system_prompt(self.gpt_prompts.system_reminder[self.language])),
         ]
 
+        # 计算 token, 我不用担心
         # TODO review impact of token count on image messages
         messages_tokens = self.main_model.token_count(messages)
         reminder_tokens = self.main_model.token_count(reminder_message)
@@ -815,17 +888,22 @@ class Coder:
             # add the reminder anyway
             total_tokens = 0
 
+        # 添加当前轮次的所有未过期的用户请求信息
         messages += self.cur_messages
 
+        # 最新的用户请求信息
         final = messages[-1]
 
         max_input_tokens = self.main_model.info.get("max_input_tokens")
+
         # Add the reminder prompt if we still have room to include it.
+        # 添加 返回格式说明 prompt.
         if max_input_tokens is None or total_tokens < max_input_tokens:
             if self.main_model.reminder_as_sys_msg:
+                # 如果模型要求将返回格式说明 prompt 集成到 system message 中, 则直接添加到 messages 中
                 messages += reminder_message
             elif final["role"] == "user":
-                # stuff it into the user message
+                # 否则, 把这段提示当成是 user 在提示模型.
                 new_content = (
                     final["content"]
                     + "\n\n"
@@ -836,18 +914,32 @@ class Coder:
         return messages
 
     def send_new_user_message(self, inp):
+        """
+        【核心函数】每次接收到用户的请求后，都调用一次本函数来获取模型输出.
+
+        此方法处理与用户消息相关的所有逻辑, 包括格式化消息、处理中断和错误、发送消息以及处理自动编辑、lint和测试。
+        
+        :param inp: 用户输入的消息内容。
+        """
+        # 初始化编辑过的文件标记为None
         self.aider_edited_files = None
 
+        # 将用户消息添加到当前消息列表中
         self.cur_messages += [
             dict(role="user", content=inp),
         ]
 
+        #【重要※】格式化消息, 内部逻辑复杂. 最终返回要传递给 LLM 的完整 messages.
         messages = self.format_messages()
 
+        # 如果在 verbose 模式下，显示消息
         if self.verbose:
             utils.show_messages(messages, functions=self.functions)
 
+        # 初始化多响应内容
         self.multi_response_content = ""
+
+        # 根据配置初始化 Markdown 流
         if self.show_pretty() and self.stream:
             use_color_hex = "#0088ff"
             if self.assistant_output_color == "light_blue":
@@ -857,53 +949,57 @@ class Coder:
         else:
             self.mdstream = None
 
-
-        exhausted = False
-        interrupted = False
+        # 初始化中断和超出上下文窗口标记
+        exhausted, interrupted = False, False
         try:
+            # 持续发送消息直到成功
             while True:
                 try:
+                    #【重要※】 TODO
                     yield from self.send(messages, functions=self.functions)
                     break
                 except KeyboardInterrupt:
+                    # 捕获键盘中断，标记中断状态
                     interrupted = True
                     break
                 except litellm.ContextWindowExceededError:
+                    # 上下文窗口超出错误，标记超出状态
                     # The input is overflowing the context window!
                     exhausted = True
                     break
                 except litellm.exceptions.BadRequestError as br_err:
+                    # 请求错误，记录并返回
                     self.io.tool_error(f"BadRequestError: {br_err}")
                     return
                 except FinishReasonLength:
-                    # We hit the 4k output limit!
+                    # 输出长度超出限制，处理多响应内容
                     if not self.main_model.can_prefill:
                         exhausted = True
                         break
-
                     self.multi_response_content = self.get_multi_response_content()
-
                     if messages[-1]["role"] == "assistant":
                         messages[-1]["content"] = self.multi_response_content
                     else:
                         messages.append(dict(role="assistant", content=self.multi_response_content))
                 except Exception as err:
+                    # 捕获其他异常，记录并返回
                     self.io.tool_error(f"Unexpected error: {err}")
                     traceback.print_exc()
                     return
         finally:
+            # 最终处理，根据配置释放Markdown流
             if self.mdstream:
                 self.live_incremental_response(True)
                 self.mdstream = None
-
+            # 更新部分响应内容
             self.partial_response_content = self.get_multi_response_content(True)
             self.multi_response_content = ""
-
+        # 如果超出上下文窗口，显示错误并计数
         if exhausted:
             self.show_exhausted_error()
             self.num_exhausted_context_windows += 1
             return
-
+        # 处理部分响应逻辑
         if self.partial_response_function_call:
             args = self.parse_partial_args()
             if args:
@@ -914,14 +1010,14 @@ class Coder:
             content = self.partial_response_content
         else:
             content = ""
-
+        # 输出工具消息
         self.io.tool_output()
-
+        # 如果发生中断，添加中断消息
         if interrupted:
             content += "\n^C KeyboardInterrupt"
             self.cur_messages += [dict(role="assistant", content=content)]
             return
-
+        # 应用更新并处理反射消息
         edited = self.apply_updates()
         if self.reflected_message:
             self.edit_outcome = False
@@ -929,7 +1025,7 @@ class Coder:
             return
         if edited:
             self.edit_outcome = True
-
+        # 如果编辑后自动lint，处理lint错误
         if edited and self.auto_lint:
             lint_errors = self.lint_edited(edited)
             self.lint_outcome = not lint_errors
@@ -939,7 +1035,7 @@ class Coder:
                     self.reflected_message = lint_errors
                     self.update_cur_messages(set())
                     return
-
+        # 如果编辑后自动测试，处理测试错误
         if edited and self.auto_test:
             test_errors = self.commands.cmd_test(self.test_cmd)
             self.test_outcome = not test_errors
@@ -949,9 +1045,9 @@ class Coder:
                     self.reflected_message = test_errors
                     self.update_cur_messages(set())
                     return
-
+        # 更新当前消息列表
         self.update_cur_messages(edited)
-
+        # 如果有编辑，处理自动提交
         if edited:
             self.aider_edited_files = edited
             if self.repo and self.auto_commits and not self.dry_run:
@@ -960,9 +1056,8 @@ class Coder:
                 saved_message = self.gpt_prompts.files_content_gpt_edits_no_repo[self.language]
             else:
                 saved_message = None
-
             self.move_back_cur_messages(saved_message)
-
+        # 检查消息中是否提及了文件，并处理相关逻辑
         add_rel_files_message = self.check_for_file_mentions(content)
         if add_rel_files_message:
             if self.reflected_message:
@@ -1119,7 +1214,6 @@ class Coder:
                 model, messages, functions, self.stream, self.temperature
             )
             self.chat_completion_call_hashes.append(hash_object.hexdigest())
-
             if self.stream:
                 yield from self.show_send_output_stream(completion)
             else:

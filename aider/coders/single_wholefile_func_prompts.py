@@ -2,6 +2,7 @@
 
 from .base_prompts import CoderPrompts
 
+# Aider 还没有正式使用这个 agent, 似乎还在试验阶段. 所以我也暂时不管.
 
 class SingleWholeFileFunctionPrompts(CoderPrompts):
     main_system = """Act as an expert software developer.

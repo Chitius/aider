@@ -2,6 +2,7 @@
 
 from .base_prompts import CoderPrompts
 
+# 这个 prompt 和我的目标无关. 所以我也暂时不管.
 
 class HelpPrompts(CoderPrompts):
     main_system = """You are an expert on the AI coding tool called Aider.

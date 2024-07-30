@@ -2,6 +2,7 @@ import configparser
 import os
 import re
 import sys
+sys.path.append("/home/admin/workspace/playground/aider")
 import threading
 from pathlib import Path
 
@@ -17,8 +18,37 @@ from aider.io import InputOutput
 from aider.llm import litellm  # noqa: F401; properly init litellm on launch
 from aider.repo import GitRepo
 from aider.versioncheck import check_version
+from typing import *
 
-from .dump import dump  # noqa: F401
+import json
+import traceback
+
+
+def cvt(s):
+    if isinstance(s, str):
+        return s
+    try:
+        return json.dumps(s, indent=4)
+    except TypeError:
+        return str(s)
+
+
+def dump(*vals):
+    # http://docs.python.org/library/traceback.html
+    stack = traceback.extract_stack()
+    vars = stack[-2][3]
+
+    # strip away the call to dump()
+    vars = "(".join(vars.split("(")[1:])
+    vars = ")".join(vars.split(")")[:-1])
+
+    vals = [cvt(v) for v in vals]
+    has_newline = sum(1 for v in vals if "\n" in v)
+    if has_newline:
+        print("%s:" % vars)
+        print(", ".join(vals))
+    else:
+        print("%s:" % vars, ", ".join(vals))
 
 
 def get_git_root():
@@ -296,16 +326,15 @@ def register_litellm_models(git_root, model_metadata_fname, io):
         return 1
 
 
-def main(argv=None, input=None, output=None, force_git_root=None, return_coder=False):
-    # 打印所有输入参数
-    # print("argv: ", argv)
-    # print("input: ", input)
-    # print("output: ", output)
-    # print("force_git_root: ", force_git_root)
-    # print("return_coder: ", return_coder)
-    # print("sys.argv[1:]: ", sys.argv[1:])
-    if argv is None:
-        argv = sys.argv[1:]
+def main(
+        user_config = None, input = None, output = None, force_git_root = None, return_coder = False,
+        edit_format: Literal["whole", "diff", "diff-fenced", "udiff", "help"] = "whole",
+        language = "en"
+    ):
+
+    if user_config is None:
+        user_config = ['--model', 'openai/qwen']
+    raw_user_config = user_config
 
     if force_git_root:
         git_root = force_git_root
@@ -323,13 +352,13 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
     default_config_files = list(map(str, default_config_files))
 
     parser = get_parser(default_config_files, git_root)
-    args, _ = parser.parse_known_args(argv)
+    args, _ = parser.parse_known_args(user_config)
 
     # Load the .env file specified in the arguments
     loaded_dotenvs = load_dotenv_files(git_root, args.env_file)
 
     # Parse again to include any arguments that might have been defined in .env
-    args = parser.parse_args(argv)
+    args = parser.parse_args(user_config)
 
     if not args.verify_ssl:
         import httpx
@@ -372,7 +401,7 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
     if args.gui and not return_coder:
         if not check_streamlit_install(io):
             return
-        launch_gui(argv)
+        launch_gui(raw_user_config)
         return
 
     for fname in loaded_dotenvs:
@@ -407,7 +436,7 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
     if args.git and not force_git_root:
         right_repo_root = guessed_wrong_repo(io, git_root, fnames, git_dname)
         if right_repo_root:
-            return main(argv, input, output, right_repo_root, return_coder=return_coder)
+            return main(user_config, input, output, right_repo_root, return_coder=return_coder)
 
     if args.just_check_update:
         update_available = check_version(io, just_check=True)
@@ -429,7 +458,7 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
         show = format_settings(parser, args)
         io.tool_output(show)
 
-    cmd_line = " ".join(sys.argv)
+    cmd_line = " ".join(["aider", ] + raw_user_config)
     cmd_line = scrub_sensitive_info(args, cmd_line)
     io.tool_output(cmd_line, log_only=True)
 
@@ -467,7 +496,7 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
     try:
         coder = Coder.create(
             main_model=main_model,
-            edit_format=args.edit_format,
+            edit_format=edit_format,
             io=io,
             ##
             fnames=fnames,
@@ -495,7 +524,7 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
             attribute_committer=args.attribute_committer,
             attribute_commit_message=args.attribute_commit_message,
             verify_ssl=args.verify_ssl,
-            language="zh"
+            language = language
         )
 
     except ValueError as err:
@@ -549,9 +578,9 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
         coder.apply_updates()
         return
 
-    if "VSCODE_GIT_IPC_HANDLE" in os.environ:
-        args.pretty = False
-        io.tool_output("VSCode terminal detected, pretty output has been disabled.")
+    # if "VSCODE_GIT_IPC_HANDLE" in os.environ:
+    #     args.pretty = False
+    #     io.tool_output("VSCode terminal detected, pretty output has been disabled.")
 
     io.tool_output('Use /help <question> for help, run "aider --help" to see cmd line args')
 

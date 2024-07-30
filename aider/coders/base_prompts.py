@@ -49,7 +49,7 @@ Any other messages in the chat may contain outdated versions of the files' conte
 Tell me which files in my repo are the most likely to **need changes** to solve the requests I make, and then stop so I can add them to the chat.
 Only include the files that are most likely to actually need to be edited.
 Don't include files that might contain relevant context, just files that will need to be changed.""",
-        "zh": """不要未经请求就尝试编辑现有代码, 告诉我仓库中哪些文件最有可能**需要修改**以解决我的需求, 然后停下来, 等我将它们添加到对话中. 
+        "zh": """不要未经请求就尝试编辑现有代码, 告诉我仓库中哪些文件最有可能 **需要修改** 以解决我的需求, 然后停下来, 等我将它们添加到对话中. 
 只要列出那些最有可能需要被编辑的文件. 
 不要列出仅仅具有相关性的文件, 只需要列出确实需要被修改的文件."""
     }
@@ -64,6 +64,6 @@ Don't include files that might contain relevant context, just files that will ne
 Do not propose changes to these files, treat them as *read-only*.
 If you need to edit any of these files, ask me to *add them to the chat* first.""",
         "zh": """这是我的 git repository 中一些文件的摘要. 
-不要对这些文件提出修改建议, 将它们视为*只读*文件. 
-如果你需要编辑这些文件中的任何一个, 可以要求我*将它们添加到对话中*. """
+不要对这些文件提出修改建议, 将它们视为 *只读* 文件. 
+如果你需要编辑这些文件中的任何一个, 可以要求我 *将它们添加到对话中*. """
     }
