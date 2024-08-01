@@ -333,7 +333,7 @@ def main(
     ):
 
     if user_config is None:
-        user_config = ['--model', 'openai/qwen']
+        user_config = ['--model', 'openai/qwen2']
     raw_user_config = user_config
 
     if force_git_root:
