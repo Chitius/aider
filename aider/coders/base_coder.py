@@ -31,6 +31,7 @@ from aider.repomap import RepoMap
 from aider.sendchat import send_with_retries
 from aider.utils import format_content, format_messages, is_image_file
 
+from typing import *
 from ..dump import dump  # noqa: F401
 
 
@@ -242,13 +243,13 @@ class Coder:
 
         self.show_diffs = show_diffs
 
-        self.commands = Commands(self.io, self, voice_language, verify_ssl=verify_ssl)
-
         if language.lower() in ['zh', 'en']:
             self.language = language
         else:
             self.language = 'en'
 
+        self.commands = Commands(self.io, self, language = self.language, voice_language = voice_language, verify_ssl=verify_ssl)
+        
         if use_git:
             try:
                 self.repo = GitRepo(
@@ -257,6 +258,7 @@ class Coder:
                     git_dname,
                     aider_ignore_file,
                     models=main_model.commit_message_models(),
+                    language=self.language,
                     attribute_author=attribute_author,
                     attribute_committer=attribute_committer,
                     attribute_commit_message=attribute_commit_message,
@@ -282,7 +284,7 @@ class Coder:
                 continue
 
             self.abs_fnames.add(fname)
-            self.check_added_files()
+            self.check_added_files()   # 进行文件 message 的添加, 且检查 token 用量
 
         if not self.repo:
             self.find_common_root()
@@ -305,6 +307,7 @@ class Coder:
         self.summarizer = ChatSummary(
             self.main_model.weak_model,
             max_chat_history_tokens,
+            self.language
         )
 
         self.summarizer_thread = None
@@ -644,13 +647,35 @@ class Coder:
 
     def run(self, with_message = None):
         """
-        主循环方法，负责处理用户消息和反射消息。
+        Agent 运行的入口.
+
+        依次做几件事:
+
+        1. 调用 self.run_loop() 来获取用户输入（但这个函数里并没有 loop 结构）. 并对用户的输入进行解析. 
+           如果用户输入的是 
+                /add, /run, /clear, /tokens, /undo, /diff, /drop, /test, /exit,
+                /quit, /ls, /help, /voice, /model, /models, /web, /lint, /commit
+           这几个指令之一, 则还要执行指令.
+           如果用户没有输入指令而是输入了请求，但是包含以下两种特殊内容，也会被立即处理:
+                
+            - 提及到某个文件名. 则会立刻征求是否添加到对话, 并进行添加操作.
+
+            - 提及到某个网址, 则会视作用户的请求中夹杂了一个 /web 指令, 并会将网址上的内容进行爬取并添加到记忆中.
+
+        2. 如果用户输入的不是指令或者指令产生了需要 LLM 响应的内容 (当做 role = user 的消息), 
+           则调用 self.send_new_user_message(), 来获取并处理模型输出，
+           包括文件编辑和自动提交. (此函数调用一次过程中，只涉及一轮和 LLM 的沟通).
+
+        3. 如果反思信息不为空, 说明遇到错误或编辑尚未结束, 则回到第 2 步.
+
+        4. 如果反思信息为空或达到最大反思轮数, 则回到第 1 步, 等待用户的新输入。
+
+        # TODO: 多轮对话中，旧的对话信息是在哪里被压缩的？
         
         @param with_message: 可选参数，如果提供，将直接处理该消息而不等待用户输入。
         """
-        """ Agent 运行的入口 """
         while True:
-            self.init_before_message()  # 初始化消息处理前的准备工作
+            self.init_before_message()  # 初始化一些变量为 None 或 0.
 
             try:
                 if with_message:
@@ -658,27 +683,33 @@ class Coder:
                     new_user_message = with_message
                     self.io.user_input(with_message)  
                 else:
-                    # 否则等待并获取用户输入的消息
+                    # 否则获取用户输入的消息, 其中还涉及处理用户的指令, 例如 /add
                     new_user_message = self.run_loop()  
 
                 while new_user_message:
                     self.reflected_message = None
 
                     # 【核心函数】
-                    # 将用户的消息格式化, 并调用 self.send() 将新的 messages 发送给 LLM, 
-                    # ...
+                    # 每次接收到用户的请求后，都调用一次本函数来获取并处理模型输出，包括文件编辑和自动提交. 此函数调用一次过程中，也只涉及一轮和 LLM 的沟通.
                     list(self.send_new_user_message(new_user_message)) 
 
-                    # 下面在干嘛还有待研究
                     new_user_message = None
                     if self.reflected_message:
+                        # 如果反思信息不为 None, 说明 LLM 的编辑任务中遇到了错误或者编辑尚未完成。
+                        # 例如遇到文件读写错误，linting 错误, 或者是模型要求添加新文件以供编辑.
                         if self.num_reflections < self.max_reflections:
+                            # 只要自我反思轮数没有超过上线，我们就向 LLM 发送一个 
+                            # {user: <反思信息>}
+                            # 的 message 来要求 LLM 进行进一步的编辑.
                             self.num_reflections += 1
                             new_user_message = self.reflected_message  
                         else:
                             self.io.tool_error(
                                 f"Only {self.max_reflections} reflections allowed, stopping."
                             )  
+
+                    # 注意！反思过程不会对 self.self.partial_response_content 和 self.partial_response_function_call 这些中间缓存做任何修改！
+                    # TODO: 该研究 partial 和 multi 在这里的区别了.
 
                 if with_message:
                     # 如果调用时自带 message, 说明是单轮对话，需要直接返回响应.
@@ -690,7 +721,19 @@ class Coder:
                 return  # 捕获EOFError，结束循环
 
     def run_loop(self):
-        inp = self.io.get_input(self.commands)
+        """
+        获取用户输入（但这个函数里并没有 loop 结构）. 并对用户的输入进行解析. 
+        如果用户输入的是 
+            /add, /run, /clear, /tokens, /undo, /diff, /drop, /test, /exit,
+            /quit, /ls, /help, /voice, /model, /models, /web, /lint, /commit
+        这几个指令之一, 则还要执行指令.
+        如果用户没有输入指令而是输入了请求，但是包含以下两种特殊内容，也会被立即处理:
+            
+        - 提及到某个文件名. 则会立刻征求是否添加到对话, 并进行添加操作.
+
+        - 提及到某个网址, 则会视作用户的请求中夹杂了一个 /web 指令, 并会将网址上的内容进行爬取并添加到记忆中.
+        """
+        inp = self.io.get_input(self.commands).strip()
 
         if not inp:
             return
@@ -698,6 +741,7 @@ class Coder:
         if self.commands.is_command(inp):
             return self.commands.run(inp)
 
+        # 如果用户的输入中
         self.check_for_file_mentions(inp)
         inp = self.check_for_urls(inp)
 
@@ -759,11 +803,17 @@ class Coder:
         self.summarized_done_messages = []
 
     def move_back_cur_messages(self, message):
+        """
+        将当前轮次的 self.cur_messages 移入历史信息部分, 并开始 summarize. 
+        这里的 message 实际上是 self.auto_commit() 所返回的信息, 例如:
+        "我已使用 git hash c725447 提交了更改, 提交信息为: Added scoreboard and timer to the snake game."
+        """
         self.done_messages += self.cur_messages
         self.summarize_start()
 
         # TODO check for impact on image messages
         if message:
+            # 把 LLM 所做的改动当成是 user 的消息
             self.done_messages += [
                 dict(role="user", content=message),
                 dict(role="assistant", content="Ok."),
@@ -915,9 +965,23 @@ class Coder:
 
     def send_new_user_message(self, inp):
         """
-        【核心函数】每次接收到用户的请求后，都调用一次本函数来获取模型输出.
+        【核心函数】每次接收到用户的请求后，都调用一次本函数来获取并处理模型输出，包括文件编辑和自动提交. 此函数调用一次过程中，也只涉及一轮和 LLM 的沟通.
 
-        此方法处理与用户消息相关的所有逻辑, 包括格式化消息、处理中断和错误、发送消息以及处理自动编辑、lint和测试。
+        做几件事:
+
+        1. 格式化出待发送给 llm 的 messages.
+
+        2. 向 llm 发送 messages, 拿到响应并将响应输出到用户端, 并做好日志, 核心函数是 self.send(). 响应会被更新到 self.partial_response_content 和 self.partial_response_function_call 中.
+
+        3. 从 LLM 响应中提取代码块编辑信息, 并将它们应用于本地代码 (但不进行 git commit), 并在控制台告知用户。
+
+        4. (如果设置了 auto_lint) 做 linting 检查，如果遇到 lint 错误也直接返回. 错误信息更新到反思信息中.
+
+        5. (如果设置了自测脚本路径) 运行自测. 错误信息更新到反思信息中。自测不通过也直接返回。
+        
+        6. 以上无错误，则进行 git commit.
+
+        7. 检查模型在输出内容中是否提及了要添加新文件，如果要的话, 就向用户征求许可并添加, 并更新反思信息。
         
         :param inp: 用户输入的消息内容。
         """
@@ -955,7 +1019,8 @@ class Coder:
             # 持续发送消息直到成功
             while True:
                 try:
-                    #【重要※】 TODO
+                    #【重要※】借助 litellm 接口向名称为 model 的 LLM (需要预注册过) 发送 messages 拿到响应并进行输出以及 log. (这个 functions 我怀疑只是留了接口但根本没用)
+                    # 如果是流式的话这个 yeild from 就会每次 yield 一段裸 text 信息。
                     yield from self.send(messages, functions=self.functions)
                     break
                 except KeyboardInterrupt:
@@ -986,20 +1051,24 @@ class Coder:
                     self.io.tool_error(f"Unexpected error: {err}")
                     traceback.print_exc()
                     return
+
         finally:
             # 最终处理，根据配置释放Markdown流
             if self.mdstream:
                 self.live_incremental_response(True)
                 self.mdstream = None
-            # 更新部分响应内容
+            
             self.partial_response_content = self.get_multi_response_content(True)
             self.multi_response_content = ""
+
         # 如果超出上下文窗口，显示错误并计数
         if exhausted:
             self.show_exhausted_error()
             self.num_exhausted_context_windows += 1
             return
-        # 处理部分响应逻辑
+        
+        # 如果是调用函数, 把 content 设置为工具调用信息
+        # 否则设置为之前的 multi_response_content 内容 (但我还没懂这个 multi_response_content 是啥)
         if self.partial_response_function_call:
             args = self.parse_partial_args()
             if args:
@@ -1010,22 +1079,32 @@ class Coder:
             content = self.partial_response_content
         else:
             content = ""
+
         # 输出工具消息
+        # TODO: 这他妈是空参数的，岂不是啥都不会干
         self.io.tool_output()
-        # 如果发生中断，添加中断消息
+
+        # 如果发生中断，添加中断消息, 然后直接返回
         if interrupted:
             content += "\n^C KeyboardInterrupt"
             self.cur_messages += [dict(role="assistant", content=content)]
             return
-        # 应用更新并处理反射消息
-        edited = self.apply_updates()
+
+        # 从 LLM 响应中提取代码块编辑信息, 并将它们应用于本地代码 (但不进行 git commit), 并在控制台告知用户。
+        # 返回一个包含了所有发生编辑操作了的文件的文件名组成的集合。
+        edited: Set[str] = self.apply_updates()   
+
         if self.reflected_message:
+            # 如果编辑操作中遇到了报错，则先不进行自动提交, 直接返回.
             self.edit_outcome = False
             self.update_cur_messages(set())
             return
+
         if edited:
+            # 如果没有报错且确实发生了编辑操作，则我们预定要进行 commit.
             self.edit_outcome = True
-        # 如果编辑后自动lint，处理lint错误
+
+        # 首先先做 linting 检查，如果遇到 lint 错误也直接返回. 错误信息更新到反思信息 self.reflected_message 中 
         if edited and self.auto_lint:
             lint_errors = self.lint_edited(edited)
             self.lint_outcome = not lint_errors
@@ -1035,7 +1114,8 @@ class Coder:
                     self.reflected_message = lint_errors
                     self.update_cur_messages(set())
                     return
-        # 如果编辑后自动测试，处理测试错误
+
+        # 如果用户设置了自测脚本, 则运行自测. 错误信息更新到反思信息 self.reflected_message 中。自测不通过也直接返回。
         if edited and self.auto_test:
             test_errors = self.commands.cmd_test(self.test_cmd)
             self.test_outcome = not test_errors
@@ -1045,9 +1125,9 @@ class Coder:
                     self.reflected_message = test_errors
                     self.update_cur_messages(set())
                     return
-        # 更新当前消息列表
+
+        ### 如果编辑无错误, linting 无错误，自测脚本无错误，则进行 commit .
         self.update_cur_messages(edited)
-        # 如果有编辑，处理自动提交
         if edited:
             self.aider_edited_files = edited
             if self.repo and self.auto_commits and not self.dry_run:
@@ -1057,9 +1137,11 @@ class Coder:
             else:
                 saved_message = None
             self.move_back_cur_messages(saved_message)
-        # 检查消息中是否提及了文件，并处理相关逻辑
+
+        # 检查模型在输出内容中是否提及了要添加新文件，如果要的话, 就向用户征求许可并添加
         add_rel_files_message = self.check_for_file_mentions(content)
         if add_rel_files_message:
+            # 如果存在这样的文件请求, 那么就设置 self.reflected_message 使之不为 None, 表明当前轮次的编辑还没完全结束, 还要迭代.
             if self.reflected_message:
                 self.reflected_message += "\n\n" + add_rel_files_message
             else:
@@ -1148,7 +1230,8 @@ class Coder:
                 )
             ]
 
-    def get_file_mentions(self, content):
+    def get_file_mentions(self, content: str) -> Set[str]:
+        """ 提取 conten 中被提到的文件名 """
         words = set(word for word in content.split())
 
         # drop sentence punctuation from the end
@@ -1182,8 +1265,12 @@ class Coder:
 
         return mentioned_rel_fnames
 
-    def check_for_file_mentions(self, content):
-        mentioned_rel_fnames = self.get_file_mentions(content)
+    def check_for_file_mentions(self, content: str) -> str:
+        """
+        检查模型在输出内容中是否提及了要添加新文件，如果要的话, 就向用户征求许可并添加.
+        """
+        # 提取 conten 中被提到的文件名.
+        mentioned_rel_fnames: Set[str] = self.get_file_mentions(content)
 
         if not mentioned_rel_fnames:
             return
@@ -1199,7 +1286,15 @@ class Coder:
 
         return prompts.added_files.format(fnames=", ".join(mentioned_rel_fnames))
 
-    def send(self, messages, model=None, functions=None):
+    def send(self, messages, model: str = None, functions = None):
+        """
+        借助 litellm 接口向名称为 model 的 LLM (需要预注册过) 发送 messages 并拿到响应. (这个 functions 我怀疑只是留了接口但根本没用)
+        然后做了以下几件事:
+        1. 刷新消息缓存 self.partial_response_content 和 self.partial_response_function_call
+        2. 调用 litellm.completion() 来向 LLM 发送信息并得到原始响应
+        3. 简单格式化后打印模型输出, 并把 content 和函数调用更新到 self.partial_response_content 和 self.partial_response_function_call 中.
+        4. 更新 log 和对话历史（不是很重要）.
+        """
         if not model:
             model = self.main_model.name
 
@@ -1210,14 +1305,18 @@ class Coder:
 
         interrupted = False
         try:
+            # completion 类型为 litellm.utils.ModelResponse 或 litellm.utils.CustomStreamWrapper
             hash_object, completion = send_with_retries(
                 model, messages, functions, self.stream, self.temperature
             )
             self.chat_completion_call_hashes.append(hash_object.hexdigest())
+
+            # 分成流式和非流式, 打印模型的输出. 流式使用 yield 逐个打印.
             if self.stream:
                 yield from self.show_send_output_stream(completion)
             else:
                 self.show_send_output(completion)
+
         except KeyboardInterrupt:
             self.keyboard_interrupt()
             interrupted = True
@@ -1226,8 +1325,10 @@ class Coder:
                 "LLM RESPONSE",
                 format_content("ASSISTANT", self.partial_response_content),
             )
-
+            
+            # 如果接收到请求
             if self.partial_response_content:
+                # 把响应内容写入对话历史文件 (不进行 stdout 上的输出)
                 self.io.ai_output(self.partial_response_content)
             elif self.partial_response_function_call:
                 # TODO: push this into subclasses
@@ -1239,6 +1340,9 @@ class Coder:
             raise KeyboardInterrupt
 
     def show_send_output(self, completion):
+        """ 对非流式的模型输出 (litellm.utils.ModelResponse), 做简单处理并进行输出.
+            之后, 更新 self.partial_response_content = content
+        """
         if self.verbose:
             print(completion)
 
@@ -1254,6 +1358,7 @@ class Coder:
             show_func_err = func_err
 
         try:
+            # 把此次响应的内容赋值给 self.partial_response_content
             self.partial_response_content = completion.choices[0].message.content
         except AttributeError as content_err:
             show_content_err = content_err
@@ -1271,6 +1376,7 @@ class Coder:
             raise Exception("No data found in LLM response!")
 
         tokens = None
+        # 更新 token 用量. 我不用管.
         if hasattr(completion, "usage") and completion.usage is not None:
             prompt_tokens = completion.usage.prompt_tokens
             completion_tokens = completion.usage.completion_tokens
@@ -1283,10 +1389,14 @@ class Coder:
                 tokens += f", ${cost:.6f} cost"
                 self.total_cost += cost
 
-        show_resp = self.render_incremental_response(True)
+        # 下面这个函数会被子 agent 覆盖定义。wholefile_coder 中,
+        # 此函数相当于直接调用 self.get_edits(mode="diff"), 做的事情是将 self.get_multi_response_content()
+        # 中的代码编辑操作进行解析, 然后返回若干个 (文件名, 代码块的来源, 代码块内容的 diff 信息) 组成的三元组.
+        show_resp = self.render_incremental_response(True)      # 
         if self.show_pretty():
             if self.assistant_output_color == "light_blue":
                 use_color_hex = "#0088ff"
+            # 以 markdown 形式展示所有代码块
             show_resp = Markdown(
                 show_resp, style=use_color_hex, code_theme=self.code_theme
             )
@@ -1365,6 +1475,7 @@ class Coder:
         return os.path.relpath(fname, self.root)
 
     def get_inchat_relative_files(self):
+        """ 返回已经添加到对话的所有文件的相对路径所组成的列表. """
         files = [self.get_rel_fname(fname) for fname in self.abs_fnames]
         return sorted(set(files))
 
@@ -1413,7 +1524,11 @@ class Coder:
         self.io.tool_output(f"Committing {path} before applying edits.")
         self.need_commit_before_edits.add(path)
 
-    def allowed_to_edit(self, path):
+    def allowed_to_edit(self, path: str) -> bool:
+        """ 
+        给定一个文件路径, 向用户征求编辑许可.
+        此外, 如果发现文件是一个新文件且用户允许添加，则立即进行 git add 操作, 且更新 self.abs_fnames.
+        """
         full_path = self.abs_root_path(path)
         if self.repo:
             need_to_add = not self.repo.path_in_repo(path)
@@ -1461,6 +1576,7 @@ class Coder:
     warning_given = False
 
     def check_added_files(self):
+        """ 进行文件 message 的添加, 且检查 token 用量 """
         if self.warning_given:
             return
 
@@ -1485,7 +1601,9 @@ class Coder:
         self.io.tool_error(urls.edit_errors)
         self.warning_given = True
 
-    def prepare_to_edit(self, edits):
+    def prepare_to_edit(self, edits: list[Tuple[str, str, str]]) -> list[Tuple[str, str, str]]:
+        """ 对每个文件都向用户征求编辑许可, 最后过滤掉不被许可的编辑请求并返回. 
+            此外，还进行了 git add 操作和编辑行为之前的 dirty commit 操作。""" 
         res = []
         seen = dict()
 
@@ -1496,24 +1614,31 @@ class Coder:
             if path in seen:
                 allowed = seen[path]
             else:
-                allowed = self.allowed_to_edit(path)
+                allowed = self.allowed_to_edit(path)   # 向用户征求编辑许可
                 seen[path] = allowed
 
             if allowed:
-                res.append(edit)
+                res.append(edit)   # 记录所有被许可了的文件
 
-        self.dirty_commit()
-        self.need_commit_before_edits = set()
+        self.dirty_commit()        # TODO: 意义不明. 为什么这些文件需要在编辑之前进行 commit ?
+        self.need_commit_before_edits = set()  
 
         return res
 
-    def update_files(self):
-        edits = self.get_edits()
-        edits = self.prepare_to_edit(edits)
-        self.apply_edits(edits)
+    def update_files(self) -> Set[str]:
+        """ 从 LLM 响应中提取代码块编辑信息, 并将它们应用于本地代码 (但不进行 git commit). 
+            最后返回一个包含了所有发生编辑操作了的文件的文件名组成的集合。 """
+        edits = self.get_edits()    # 从 LLM 响应中提取代码块编辑信息并以三元组组成的列表的形式返回. 具体参考 wholefile_coder.py 中的注释。
+        edits = self.prepare_to_edit(edits)   # 向用户征求许可, 过滤掉不被许可的编辑
+        self.apply_edits(edits)     # 将编辑应用到本地文件. 具体参考 wholefile_coder.py 中的注释。就是很简单的 write_text 调用.
         return set(edit[0] for edit in edits)
 
-    def apply_updates(self):
+    def apply_updates(self) -> Set[str]:
+        """ 
+        从 LLM 响应中提取代码块编辑信息, 并将它们应用于本地代码 (但不进行 git commit), 并在控制台告知用户。
+        最后返回一个包含了所有发生编辑操作了的文件的文件名组成的集合。
+        如果上述操作遇到错误，会把报错信息放到反思信息 self.reflected_message 中, 后续会让模型进行迭代.
+        """
         try:
             edited = self.update_files()
         except ValueError as err:
@@ -1586,7 +1711,10 @@ class Coder:
 
         return context
 
-    def auto_commit(self, edited):
+    def auto_commit(self, edited) -> str:
+        """
+        执行 git commit <comment>, comment 内容也由 LLM 生成. 返回一条待安放在 msgs 中有关这次 commit 的消息.
+        """
         context = self.get_context_from_history(self.cur_messages)
         res = self.repo.commit(fnames=edited, context=context, aider_edits=True)
         if res:

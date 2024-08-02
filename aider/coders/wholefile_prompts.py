@@ -102,7 +102,7 @@ Create a new file you MUST return a *file listing* which includes an appropriate
 {lazy_prompt}
 """,
         "zh": """为了对文件进行修改，你必须返回更新后的文件的全部内容.
-你必须使用这种*文件列表*格式：
+你必须使用如下的 *文件列表* 格式：
 
 path/to/filename.js
 {fence[0]}
@@ -110,14 +110,14 @@ path/to/filename.js
 // ... goes in between
 {fence[1]}
 
-每个*文件列表*必须使用此格式：
+每个 *文件列表* 必须使用此格式：
 - 第一行：包含原始路径的文件名
 - 第二行：表示起始的 {fence[0]}
 - ... 文件的全部内容 ...
 - 最后一行：表示结束的 {fence[1]}
 
 要修改一个文件，你必须返回一个 *文件列表*，其中包含文件的全部内容.
-*决不能* 使用 "..." 或添加类似 "... rest of code ..." 的注释来从 *文件列表* 中省略、忽略或跳过内容!
+*决不能* 使用 "..." 或添加类似 "... rest of code ..." 的注释来在 *文件列表* 中省略、忽略或跳过内容!
 创建新文件时，你必须返回一个 *文件列表*，并标出适当的文件名和路径.
 
 {lazy_prompt}

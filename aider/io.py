@@ -172,6 +172,7 @@ class InputOutput:
     # OUTPUT
 
     def ai_output(self, content):
+        """ 把响应内容写入对话历史文件 (不进行 stdout 上的输出) """
         hist = "\n" + content.strip() + "\n\n"
         self.append_chat_history(hist)
 
@@ -233,6 +234,11 @@ class InputOutput:
         
 
     def tool_output(self, *messages, log_only=False):
+        """
+        负责:
+        1. tokens 数告知
+        ...
+        """
         if messages:
             hist = " ".join(messages)
             hist = f"{hist.strip()}"

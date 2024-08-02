@@ -6,10 +6,11 @@ from aider.sendchat import simple_send_with_retries
 
 
 class ChatSummary:
-    def __init__(self, model=None, max_tokens=1024):
+    def __init__(self, model=None, max_tokens=1024, language = "en"):
         self.token_count = model.token_count
         self.max_tokens = max_tokens
         self.model = model
+        self.language = language
 
     def too_big(self, messages):
         sized = self.tokenize(messages)
@@ -97,14 +98,14 @@ class ChatSummary:
                 content += "\n"
 
         messages = [
-            dict(role="system", content=prompts.summarize),
+            dict(role="system", content=prompts.summarize[self.language]),
             dict(role="user", content=content),
         ]
 
         summary = simple_send_with_retries(self.model.name, messages)
         if summary is None:
             raise ValueError(f"summarizer unexpectedly failed for {self.model.name}")
-        summary = prompts.summary_prefix + summary
+        summary = prompts.summary_prefix[self.language] + summary
 
         return [dict(role="user", content=summary)]
 

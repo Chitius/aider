@@ -23,12 +23,14 @@ class GitRepo:
         git_dname,
         aider_ignore_file=None,
         models=None,
+        language="en",
         attribute_author=True,
         attribute_committer=True,
         attribute_commit_message=False,
     ):
         self.io = io
         self.models = models
+        self.language = language
 
         self.attribute_author = attribute_author
         self.attribute_committer = attribute_committer
@@ -155,7 +157,7 @@ class GitRepo:
         content += diffs
 
         messages = [
-            dict(role="system", content=prompts.commit_system),
+            dict(role="system", content=prompts.commit_system[self.language]),
             dict(role="user", content=content),
         ]
 

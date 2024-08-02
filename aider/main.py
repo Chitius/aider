@@ -329,11 +329,16 @@ def register_litellm_models(git_root, model_metadata_fname, io):
 def main(
         user_config = None, input = None, output = None, force_git_root = None, return_coder = False,
         edit_format: Literal["whole", "diff", "diff-fenced", "udiff", "help"] = "whole",
-        language = "en"
+        language = "zh"
     ):
 
     if user_config is None:
-        user_config = ['--model', 'openai/qwen2']
+        print("[chuan] using temporarily enforced configs: ", end = "")
+        user_config = []
+        user_config += ['--model', 'openai/qwen2']
+        user_config += ['--stream', 'false']
+        user_config += ['--model-settings-file', '/home/admin/workspace/playground/.aider.model.settings.yml']
+        print(" ".join(user_config))
     raw_user_config = user_config
 
     if force_git_root:

@@ -24,9 +24,10 @@ class Commands:
     voice = None
     scraper = None
 
-    def __init__(self, io, coder, voice_language=None, verify_ssl=True):
+    def __init__(self, io, coder, language = "en", voice_language=None, verify_ssl=True):
         self.io = io
         self.coder = coder
+        self.language = language
 
         self.verify_ssl = verify_ssl
         if voice_language == "auto":
@@ -219,13 +220,13 @@ class Commands:
         self.coder.choose_fence()
 
         # system messages
-        main_sys = self.coder.fmt_system_prompt(self.coder.gpt_prompts.main_system)
-        main_sys += "\n" + self.coder.fmt_system_prompt(self.coder.gpt_prompts.system_reminder)
+        main_sys = self.coder.fmt_system_prompt(self.coder.gpt_prompts.main_system[self.language])
+        main_sys += "\n" + self.coder.fmt_system_prompt(self.coder.gpt_prompts.system_reminder[self.language])
         msgs = [
             dict(role="system", content=main_sys),
             dict(
                 role="system",
-                content=self.coder.fmt_system_prompt(self.coder.gpt_prompts.system_reminder),
+                content=self.coder.fmt_system_prompt(self.coder.gpt_prompts.system_reminder[self.language]),
             ),
         ]
 
@@ -374,7 +375,7 @@ class Commands:
         self.io.tool_output(f"HEAD is: {current_head_hash} {current_head_message}")
 
         if self.coder.main_model.send_undo_reply:
-            return prompts.undo_command_reply
+            return prompts.undo_command_reply[self.language]
 
     def cmd_diff(self, args=""):
         "Display the diff of the last aider commit"
@@ -513,7 +514,7 @@ class Commands:
         if not self.coder.cur_messages:
             return
 
-        reply = prompts.added_files.format(fnames=", ".join(added_fnames))
+        reply = prompts.added_files[self.language].format(fnames=", ".join(added_fnames))
         return reply
 
     def completions_drop(self):
@@ -611,7 +612,7 @@ class Commands:
             for line in combined_output.splitlines():
                 self.io.tool_output(line, log_only=True)
 
-            msg = prompts.run_output.format(
+            msg = prompts.run_output[self.language].format(
                 command=args,
                 output=combined_output,
             )

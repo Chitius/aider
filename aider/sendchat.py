@@ -57,6 +57,10 @@ def lazy_litellm_retry_decorator(func):
 
 @lazy_litellm_retry_decorator
 def send_with_retries(model_name, messages, functions, stream, temperature=0):
+    """
+    直接调用 litellm.completion() 来向 LLM 发送信息并返回 (此次发送的所有信息的哈希值, litellm 直接返回的响应). 
+    litellm 返回的响应是 litellm.utils.ModelResponse 或 litellm.utils.CustomStreamWrapper 类型.
+    """
     from aider.llm import litellm
 
     kwargs = dict(

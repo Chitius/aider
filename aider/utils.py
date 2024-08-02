@@ -102,6 +102,7 @@ def format_content(role, content):
 
 
 def format_messages(messages, title=None):
+    """ 将列表型的 messages 格式化成单条的 str. 每条 message 都变为 {role} {one_line_of_content}\n{role} {one_line_of_content}... """
     output = []
     if title:
         output.append(f"{title.upper()} {'*' * 50}")
