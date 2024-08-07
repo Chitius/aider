@@ -1,4 +1,6 @@
 class CoderPrompts:
+    system_reminder = ""
+    
     files_content_gpt_edits = {
         "en": "I committed the changes with git hash {hash} & commit msg: {message}",
         "zh": "我已使用 git hash {hash} 提交了更改, 提交信息为: {message}"

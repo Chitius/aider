@@ -2,6 +2,8 @@
 
 import hashlib
 import json
+import locale
+import math
 import mimetypes
 import os
 import platform
@@ -51,12 +53,10 @@ class Coder:
     abs_fnames = None
     repo = None
     last_aider_commit_hash = None
-    aider_commit_hashes = set()
     aider_edited_files = None
     last_asked_for_commit_time = 0
     repo_map = None
     functions = None
-    total_cost = 0.0
     num_exhausted_context_windows = 0
     num_malformed_responses = 0
     last_keyboard_interrupt = None
@@ -82,14 +82,7 @@ class Coder:
         summarize_from_coder=True,
         **kwargs,
     ):
-        """ 创建并返回 Agent """
-        from . import (
-            EditBlockCoder,
-            EditBlockFencedCoder,
-            HelpCoder,
-            UnifiedDiffCoder,
-            WholeFileCoder,
-        )
+        import aider.coders as coders
 
         if not main_model:
             if from_coder:
@@ -119,10 +112,12 @@ class Coder:
 
             # Bring along context from the old Coder
             update = dict(
-                fnames=from_coder.get_inchat_relative_files(),
+                fnames=list(from_coder.abs_fnames),
                 done_messages=done_messages,
                 cur_messages=from_coder.cur_messages,
                 aider_commit_hashes=from_coder.aider_commit_hashes,
+                commands=from_coder.commands.clone(),
+                total_cost=from_coder.total_cost,
             )
 
             use_kwargs.update(update)  # override to complete the switch
@@ -130,29 +125,75 @@ class Coder:
 
             kwargs = use_kwargs
 
-        if edit_format == "diff":
-            res = EditBlockCoder(main_model, io, **kwargs)
-        elif edit_format == "diff-fenced":
-            res = EditBlockFencedCoder(main_model, io, **kwargs)
-        elif edit_format == "whole":
-            res = WholeFileCoder(main_model, io, **kwargs)
-        elif edit_format == "udiff":
-            res = UnifiedDiffCoder(main_model, io, **kwargs)
-        elif edit_format == "help":
-            res = HelpCoder(main_model, io, **kwargs)
+        for coder in coders.__all__:
+            if hasattr(coder, "edit_format") and coder.edit_format == edit_format:
+                res = coder(main_model, io, **kwargs)
+                res.original_kwargs = dict(kwargs)
+                return res
+
+        raise ValueError(f"Unknown edit format {edit_format}")
+
+    def clone(self, **kwargs):
+        return Coder.create(from_coder=self, **kwargs)
+
+    def get_announcements(self):
+        lines = []
+        lines.append(f"Aider v{__version__}")
+
+        # Model
+        main_model = self.main_model
+        weak_model = main_model.weak_model
+        prefix = "Model:"
+        output = f" {main_model.name} with {self.edit_format} edit format"
+        if weak_model is not main_model:
+            prefix = "Models:"
+            output += f", weak model {weak_model.name}"
+        lines.append(prefix + output)
+
+        # Repo
+        if self.repo:
+            rel_repo_dir = self.repo.get_rel_repo_dir()
+            num_files = len(self.repo.get_tracked_files())
+            lines.append(f"Git repo: {rel_repo_dir} with {num_files:,} files")
+            if num_files > 1000:
+                lines.append(
+                    "Warning: For large repos, consider using --subtree-only and .aiderignore"
+                )
+                lines.append(f"See: {urls.large_repos}")
         else:
-            raise ValueError(f"Unknown edit format {edit_format}")
+            lines.append("Git repo: none")
 
-        res.original_kwargs = dict(kwargs)
+        # Repo-map
+        if self.repo_map:
+            map_tokens = self.repo_map.max_map_tokens
+            if map_tokens > 0:
+                lines.append(f"Repo-map: using {map_tokens} tokens")
+                max_map_tokens = 2048
+                if map_tokens > max_map_tokens:
+                    lines.append(
+                        f"Warning: map-tokens > {max_map_tokens} is not recommended as too much"
+                        " irrelevant code can confuse GPT."
+                    )
+            else:
+                lines.append("Repo-map: disabled because map_tokens == 0")
+        else:
+            lines.append("Repo-map: disabled")
 
-        return res
+        # Files
+        for fname in self.get_inchat_relative_files():
+            lines.append(f"Added {fname} to the chat.")
+
+        if self.done_messages:
+            lines.append("Restored previous conversation history.")
+
+        return lines
 
     def __init__(
         self,
         main_model,
         io,
+        repo=None,
         fnames=None,
-        git_dname=None,
         pretty=True,
         show_diffs=False,
         auto_commits=True,
@@ -164,22 +205,18 @@ class Coder:
         code_theme="default",
         stream=True,
         use_git=True,
-        voice_language=None,
-        aider_ignore_file=None,
         cur_messages=None,
         done_messages=None,
-        max_chat_history_tokens=None,
         restore_chat_history=False,
         auto_lint=True,
         auto_test=False,
         lint_cmds=None,
         test_cmd=None,
-        attribute_author=True,
-        attribute_committer=True,
-        attribute_commit_message=False,
         aider_commit_hashes=None,
         map_mul_no_files=8,
-        verify_ssl=True,
+        commands=None,
+        summarizer=None,
+        total_cost=0.0,
         language="en",
     ):
         """
@@ -192,6 +229,10 @@ class Coder:
 
         - io: aider.io.InputOutput 对象，用于输入输出. 和用户的所有交互都要过这个层.
         """
+        self.aider_commit_hashes = set()
+        self.rejected_urls = set()
+        self.abs_root_path_cache = {}
+
         if not fnames:
             fnames = []
 
@@ -206,6 +247,8 @@ class Coder:
         self.chat_completion_call_hashes = []
         self.chat_completion_response_hashes = []
         self.need_commit_before_edits = set()
+
+        self.total_cost = total_cost
 
         self.verbose = verbose
         self.abs_fnames = set()
@@ -248,24 +291,23 @@ class Coder:
         else:
             self.language = 'en'
 
-        self.commands = Commands(self.io, self, language = self.language, voice_language = voice_language, verify_ssl=verify_ssl)
-        
-        if use_git:
+        self.commands = commands or Commands(self.io, self)
+        self.commands.coder = self
+
+        if use_git and self.repo is None:
             try:
                 self.repo = GitRepo(
                     self.io,
                     fnames,
-                    git_dname,
-                    aider_ignore_file,
+                    None,
                     models=main_model.commit_message_models(),
-                    language=self.language,
-                    attribute_author=attribute_author,
-                    attribute_committer=attribute_committer,
-                    attribute_commit_message=attribute_commit_message,
+                    language=self.language
                 )
-                self.root = self.repo.root
             except FileNotFoundError:
-                self.repo = None
+                pass
+
+        if self.repo:
+            self.root = self.repo.root
 
         for fname in fnames:
             fname = Path(fname)
@@ -289,8 +331,17 @@ class Coder:
         if not self.repo:
             self.find_common_root()
 
+        if map_tokens is None:
+            use_repo_map = main_model.use_repo_map
+            map_tokens = 1024
+        else:
+            use_repo_map = map_tokens > 0
+
         max_inp_tokens = self.main_model.info.get("max_input_tokens") or 0
-        if main_model.use_repo_map and self.repo and self.gpt_prompts.repo_content_prefix[self.language]:
+
+        has_map_prompt = hasattr(self, "gpt_prompts") and self.gpt_prompts.repo_content_prefix[self.language]
+
+        if use_repo_map and self.repo and has_map_prompt:
             self.repo_map = RepoMap(
                 map_tokens,
                 self.root,
@@ -302,11 +353,9 @@ class Coder:
                 map_mul_no_files=map_mul_no_files,
             )
 
-        if max_chat_history_tokens is None:
-            max_chat_history_tokens = self.main_model.max_chat_history_tokens
-        self.summarizer = ChatSummary(
-            self.main_model.weak_model,
-            max_chat_history_tokens,
+        self.summarizer = summarizer or ChatSummary(
+            [self.main_model.weak_model, self.main_model],
+            self.main_model.max_chat_history_tokens,
             self.language
         )
 
@@ -425,8 +474,14 @@ class Coder:
             return True
 
     def abs_root_path(self, path):
+        key = path
+        if key in self.abs_root_path_cache:
+            return self.abs_root_path_cache[key]
+
         res = Path(self.root) / path
-        return utils.safe_abs_path(res)
+        res = utils.safe_abs_path(res)
+        self.abs_root_path_cache[key] = res
+        return res
 
     fences = [
         ("``" + "`", "``" + "`"),
@@ -592,9 +647,9 @@ class Coder:
                 "en": "Ok, any changes I propose will be to those files.",
                 "zh": "好的, 我所提出的任何更改都会被应用于这些文件."
             }[self.language]
-        elif repo_content:
-            files_content = self.gpt_prompts.files_no_full_files_with_repo_map[self.language]
-            files_reply = self.gpt_prompts.files_no_full_files_with_repo_map_reply[self.language]
+        elif repo_content and self.gpt_prompts.files_no_full_files_with_repo_map:
+            files_content = self.gpt_prompts.files_no_full_files_with_repo_map
+            files_reply = self.gpt_prompts.files_no_full_files_with_repo_map_reply
         else:
             files_content = self.gpt_prompts.files_no_full_files[self.language]
             files_reply = "Ok."
@@ -743,19 +798,24 @@ class Coder:
 
         # 如果用户的输入中
         self.check_for_file_mentions(inp)
-        inp = self.check_for_urls(inp)
+        self.check_for_urls(inp)
 
         return inp
 
     def check_for_urls(self, inp):
         url_pattern = re.compile(r"(https?://[^\s/$.?#].[^\s]*[^\s,.])")
-        urls = url_pattern.findall(inp)
+        urls = list(set(url_pattern.findall(inp)))  # Use set to remove duplicates
+        added_urls = []
         for url in urls:
-            if self.io.confirm_ask(f"Add {url} to the chat?"):
-                inp += "\n\n"
-                inp += self.commands.cmd_web(url)
+            if url not in self.rejected_urls:
+                if self.io.confirm_ask(f"Add {url} to the chat?"):
+                    inp += "\n\n"
+                    inp += self.commands.cmd_web(url)
+                    added_urls.append(url)
+                else:
+                    self.rejected_urls.add(url)
 
-        return inp
+        return added_urls
 
     def keyboard_interrupt(self):
         now = time.time()
@@ -820,19 +880,41 @@ class Coder:
             ]
         self.cur_messages = []
 
+    def get_user_language(self):
+        try:
+            lang = locale.getlocale()[0]
+            if lang:
+                return lang  # Return the full language code, including country
+        except Exception:
+            pass
+
+        for env_var in ["LANG", "LANGUAGE", "LC_ALL", "LC_MESSAGES"]:
+            lang = os.environ.get(env_var)
+            if lang:
+                return lang.split(".")[
+                    0
+                ]  # Return language and country, but remove encoding if present
+
+        return None
+
     def fmt_system_prompt(self, prompt):
         lazy_prompt = self.gpt_prompts.lazy_prompt[self.language] if self.main_model.lazy else ""
 
-        platform_text = f"- The user's system: {platform.platform()}\n"
+        platform_text = f"- Platform: {platform.platform()}\n"
         if os.name == "nt":
             var = "COMSPEC"
         else:
             var = "SHELL"
 
         val = os.getenv(var)
-        platform_text += f"- The user's shell: {var}={val}\n"
-        dt = datetime.now().isoformat()
-        platform_text += f"- The current date/time: {dt}"
+        platform_text += f"- Shell: {var}={val}\n"
+
+        user_lang = self.get_user_language()
+        if user_lang:
+            platform_text += f"- Language: {user_lang}\n"
+
+        dt = datetime.now().astimezone().strftime("%Y-%m-%dT%H:%M:%S%z")
+        platform_text += f"- Current date/time: {dt}"
 
         prompt = prompt.format(
             fence=self.fence,
@@ -903,9 +985,9 @@ class Coder:
                     dict(role="assistant", content="Ok."),
                 ]
 
-        ### 接下来是构筑 messages 的过程
-        # 首先添加首条 system message
-        main_sys += "\n" + self.fmt_system_prompt(self.gpt_prompts.system_reminder[self.language])
+        if self.gpt_prompts.system_reminder:
+            main_sys += "\n" + self.fmt_system_prompt(self.gpt_prompts.system_reminder[self.language])
+
         messages = [
             dict(role="system", content=main_sys),
         ]
@@ -922,9 +1004,14 @@ class Coder:
         # 第二部分是 user: 我已经 XXX 文件添加到对话 <文件内容> + assistant: "好的, 我所提出的任何更改都会被应用于这些文件."
         messages += self.get_files_messages()
 
-        reminder_message = [
-            dict(role="system", content=self.fmt_system_prompt(self.gpt_prompts.system_reminder[self.language])),
-        ]
+        if self.gpt_prompts.system_reminder:
+            reminder_message = [
+                dict(
+                    role="system", content=self.fmt_system_prompt(self.gpt_prompts.system_reminder[self.language])
+                ),
+            ]
+        else:
+            reminder_message = []
 
         # 计算 token, 我不用担心
         # TODO review impact of token count on image messages
@@ -948,7 +1035,11 @@ class Coder:
 
         # Add the reminder prompt if we still have room to include it.
         # 添加 返回格式说明 prompt.
-        if max_input_tokens is None or total_tokens < max_input_tokens:
+        if (
+            max_input_tokens is None
+            or total_tokens < max_input_tokens
+            and self.gpt_prompts.system_reminder
+        ):
             if self.main_model.reminder_as_sys_msg:
                 # 如果模型要求将返回格式说明 prompt 集成到 system message 中, 则直接添加到 messages 中
                 messages += reminder_message
@@ -1014,7 +1105,7 @@ class Coder:
             self.mdstream = None
 
         # 初始化中断和超出上下文窗口标记
-        exhausted, interrupted = False, False
+        self.usage_report, exhausted, interrupted = None, False, False
         try:
             # 持续发送消息直到成功
             while True:
@@ -1061,7 +1152,13 @@ class Coder:
             self.partial_response_content = self.get_multi_response_content(True)
             self.multi_response_content = ""
 
-        # 如果超出上下文窗口，显示错误并计数
+        # 输出工具消息
+        # TODO: 这他妈是空参数的，岂不是啥都不会干
+        self.io.tool_output()
+
+        if self.usage_report:
+            self.io.tool_output(self.usage_report)
+
         if exhausted:
             self.show_exhausted_error()
             self.num_exhausted_context_windows += 1
@@ -1079,10 +1176,6 @@ class Coder:
             content = self.partial_response_content
         else:
             content = ""
-
-        # 输出工具消息
-        # TODO: 这他妈是空参数的，岂不是啥都不会干
-        self.io.tool_output()
 
         # 如果发生中断，添加中断消息, 然后直接返回
         if interrupted:
@@ -1208,10 +1301,19 @@ class Coder:
         res = ""
         for fname in fnames:
             errors = self.linter.lint(self.abs_root_path(fname))
+
             if errors:
                 res += "\n"
                 res += errors
                 res += "\n"
+
+        # Commit any formatting changes that happened
+        if self.repo and self.auto_commits and not self.dry_run:
+            commit_res = self.repo.commit(
+                fnames=fnames, context="The linter made edits to these files", aider_edits=True
+            )
+            if commit_res:
+                self.show_auto_commit_outcome(commit_res)
 
         if res:
             self.io.tool_error(res)
@@ -1296,7 +1398,7 @@ class Coder:
         4. 更新 log 和对话历史（不是很重要）.
         """
         if not model:
-            model = self.main_model.name
+            model = self.main_model
 
         self.partial_response_content = ""
         self.partial_response_function_call = dict()
@@ -1307,7 +1409,13 @@ class Coder:
         try:
             # completion 类型为 litellm.utils.ModelResponse 或 litellm.utils.CustomStreamWrapper
             hash_object, completion = send_with_retries(
-                model, messages, functions, self.stream, self.temperature
+                model.name,
+                messages,
+                functions,
+                self.stream,
+                self.temperature,
+                extra_headers=model.extra_headers,
+                max_tokens=model.max_tokens,
             )
             self.chat_completion_call_hashes.append(hash_object.hexdigest())
 
@@ -1338,6 +1446,8 @@ class Coder:
 
         if interrupted:
             raise KeyboardInterrupt
+
+        self.calculate_and_show_tokens_and_cost(messages, completion)
 
     def show_send_output(self, completion):
         """ 对非流式的模型输出 (litellm.utils.ModelResponse), 做简单处理并进行输出.
@@ -1375,24 +1485,10 @@ class Coder:
             self.io.tool_error(show_content_err)
             raise Exception("No data found in LLM response!")
 
-        tokens = None
-        # 更新 token 用量. 我不用管.
-        if hasattr(completion, "usage") and completion.usage is not None:
-            prompt_tokens = completion.usage.prompt_tokens
-            completion_tokens = completion.usage.completion_tokens
-
-            tokens = f"{prompt_tokens} prompt tokens, {completion_tokens} completion tokens"
-            if self.main_model.info.get("input_cost_per_token"):
-                cost = prompt_tokens * self.main_model.info.get("input_cost_per_token")
-                if self.main_model.info.get("output_cost_per_token"):
-                    cost += completion_tokens * self.main_model.info.get("output_cost_per_token")
-                tokens += f", ${cost:.6f} cost"
-                self.total_cost += cost
-
         # 下面这个函数会被子 agent 覆盖定义。wholefile_coder 中,
         # 此函数相当于直接调用 self.get_edits(mode="diff"), 做的事情是将 self.get_multi_response_content()
         # 中的代码编辑操作进行解析, 然后返回若干个 (文件名, 代码块的来源, 代码块内容的 diff 信息) 组成的三元组.
-        show_resp = self.render_incremental_response(True)      # 
+        show_resp = self.render_incremental_response(True)
         if self.show_pretty():
             if self.assistant_output_color == "light_blue":
                 use_color_hex = "#0088ff"
@@ -1405,9 +1501,6 @@ class Coder:
             show_resp = Text(show_resp or "<no response>")
             self.io.print(show_resp, color = self.assistant_output_color)
 
-
-        if tokens is not None:
-            self.io.tool_output(tokens)
 
         if (
             hasattr(completion.choices[0], "finish_reason")
@@ -1451,7 +1544,9 @@ class Coder:
                     sys.stdout.write(text)
                 except UnicodeEncodeError:
                     # Safely encode and decode the text
-                    safe_text = text.encode(sys.stdout.encoding, errors='backslashreplace').decode(sys.stdout.encoding)
+                    safe_text = text.encode(sys.stdout.encoding, errors="backslashreplace").decode(
+                        sys.stdout.encoding
+                    )
                     sys.stdout.write(safe_text)
                 sys.stdout.flush()
                 yield text
@@ -1462,6 +1557,39 @@ class Coder:
 
     def render_incremental_response(self, final):
         return self.get_multi_response_content()
+
+    def calculate_and_show_tokens_and_cost(self, messages, completion=None):
+        prompt_tokens = 0
+        completion_tokens = 0
+        cost = 0
+
+        if completion and hasattr(completion, "usage") and completion.usage is not None:
+            prompt_tokens = completion.usage.prompt_tokens
+            completion_tokens = completion.usage.completion_tokens
+        else:
+            prompt_tokens = self.main_model.token_count(messages)
+            completion_tokens = self.main_model.token_count(self.partial_response_content)
+
+        self.usage_report = f"Tokens: {prompt_tokens:,} sent, {completion_tokens:,} received."
+
+        if self.main_model.info.get("input_cost_per_token"):
+            cost += prompt_tokens * self.main_model.info.get("input_cost_per_token")
+            if self.main_model.info.get("output_cost_per_token"):
+                cost += completion_tokens * self.main_model.info.get("output_cost_per_token")
+            self.total_cost += cost
+
+            def format_cost(value):
+                if value == 0:
+                    return "0.00"
+                magnitude = abs(value)
+                if magnitude >= 0.01:
+                    return f"{value:.2f}"
+                else:
+                    return f"{value:.{max(2, 2 - int(math.log10(magnitude)))}f}"
+
+            self.usage_report += (
+                f" Cost: ${format_cost(cost)} request, ${format_cost(self.total_cost)} session."
+            )
 
     def get_multi_response_content(self, final=False):
         cur = self.multi_response_content
@@ -1491,7 +1619,9 @@ class Coder:
         else:
             files = self.get_inchat_relative_files()
 
-        files = [fname for fname in files if self.is_file_safe(fname)]
+        # This is quite slow in large repos
+        # files = [fname for fname in files if self.is_file_safe(fname)]
+
         return sorted(set(files))
 
     def get_all_abs_files(self):
@@ -1718,13 +1848,8 @@ class Coder:
         context = self.get_context_from_history(self.cur_messages)
         res = self.repo.commit(fnames=edited, context=context, aider_edits=True)
         if res:
+            self.show_auto_commit_outcome(res)
             commit_hash, commit_message = res
-            self.last_aider_commit_hash = commit_hash
-            self.aider_commit_hashes.add(commit_hash)
-            self.last_aider_commit_message = commit_message
-            if self.show_diffs:
-                self.commands.cmd_diff()
-
             return self.gpt_prompts.files_content_gpt_edits[self.language].format(
                 hash=commit_hash,
                 message=commit_message,
@@ -1732,6 +1857,16 @@ class Coder:
 
         self.io.tool_output("No changes made to git tracked files.")
         return self.gpt_prompts.files_content_gpt_no_edits[self.language]
+
+    def show_auto_commit_outcome(self, res):
+        commit_hash, commit_message = res
+        self.last_aider_commit_hash = commit_hash
+        self.aider_commit_hashes.add(commit_hash)
+        self.last_aider_commit_message = commit_message
+        if self.show_diffs:
+            self.commands.cmd_diff()
+
+        self.io.tool_output(f"You can use /undo to revert and discard commit {commit_hash}.")
 
     def dirty_commit(self):
         if not self.need_commit_before_edits:
@@ -1746,3 +1881,9 @@ class Coder:
         # files changed, move cur messages back behind the files messages
         # self.move_back_cur_messages(self.gpt_prompts.files_content_local_edits[self.language])
         return True
+
+    def get_edits(self, mode="update"):
+        return []
+
+    def apply_edits(self, edits):
+        return

@@ -15,6 +15,9 @@ cog.out(get_help_md())
 |Command|Description|
 |:------|:----------|
 | **/add** | Add files to the chat so GPT can edit them or review them in detail |
+| **/add-clipboard-image** | Add an image from the clipboard to the chat |
+| **/ask** | Ask questions about the code base without editing any files |
+| **/chat-mode** | Switch to a new chat mode |
 | **/clear** | Clear the chat history |
 | **/commit** | Commit edits to the repo made outside the chat (commit message optional) |
 | **/diff** | Display the diff of the last aider commit |
@@ -41,15 +44,19 @@ You can easily re-send commands or messages.
 Use the up arrow ⬆ to scroll back
 or CONTROL-R to search your message history.
 
-# Entering multi-line chat messages
+## Entering multi-line chat messages
 
 {% include multi-line.md %}
 
-# Keybindings
+## Interrupting with CONTROL-C
+
+It's always safe to use Control-C to interrupt aider if it isn't providing a useful response. The partial response remains in the conversation, so you can refer to it when you reply to the LLM with more information or direction.
+
+## Keybindings
 
 The interactive prompt is built with [prompt-toolkit](https://github.com/prompt-toolkit/python-prompt-toolkit) which provides emacs and vi keybindings. 
 
-## Emacs
+### Emacs
 
 - `Ctrl-A` : Move cursor to the start of the line.
 - `Ctrl-B` : Move cursor back one character.
@@ -63,7 +70,7 @@ The interactive prompt is built with [prompt-toolkit](https://github.com/prompt-
 - `Ctrl-R` : Reverse search in command history.
 
 
-## Vi
+### Vi
 
 To use vi/vim keybindings, run aider with the `--vim` switch.
 

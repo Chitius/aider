@@ -5,9 +5,11 @@
 commit_system = {
     "en": """You are an expert software engineer.
 Review the provided context and diffs which are about to be committed to a git repo.
-Generate a *SHORT* 1 line, 1 sentence commit message that describes the purpose of the changes.
-The commit message MUST be in the past tense.
-It must describe the changes *which have been made* in the diffs!
+Review the diffs carefully.
+Generate a commit message for those changes.
+The commit message MUST use the imperative tense.
+The commit message should be structured as follows: <type>: <description>
+Use these for <type>: fix, feat, build, chore, ci, docs, style, refactor, perf, test
 Reply with JUST the commit message, without quotes, comments, questions, etc!
 """,
     "zh": """您是一位资深软件工程师. 
@@ -31,6 +33,7 @@ undo_command_reply = {
     )
 }
 
+<<<<<<< HEAD
 added_files = {
     "en": """I added these files to the chat: {fnames}.
 
@@ -40,6 +43,11 @@ If you need to propose edits to other existing files not already added to the ch
 如果您需要对其他未加入对话的文件进行编辑, 您 *必须* 告诉我它们的完整路径名称, 并要求我 *将文件添加到对话中*. 结束您的回复并等待我的批准. 如果您需要编辑更多文件, 您可以继续询问.
 """
 }
+=======
+added_files = (
+    "I added these files to the chat: {fnames}\nLet me know if there are others we should add."
+)
+>>>>>>> main
 
 
 run_output = {
