@@ -213,29 +213,32 @@ class DAGPlanner(Agent, AgentEnvMixin):
         return llm_result
         
 def update_plan(llm_result: str, user_request: str = None, curr_plan: Plan = None) -> Plan:
-    tasks_text = parse_code(text = llm_result, lang = 'json')
-    logger.info(f'tasks: {tasks_text}')
-    tasks = json5.loads(tasks_text)
-    tasks = [Task(**task) for task in tasks]
-    if curr_plan is None:
-        if user_request is None:
-            raise RuntimeError
-        new_plan = Plan(goal=user_request)
-        new_plan.add_tasks(tasks=tasks)
-        return new_plan, True
-    else:
-        if len(tasks) == 1 or tasks[0].dependent_task_ids:
-            if tasks[0].dependent_task_ids and len(tasks) > 1:
-                logger.warning(
-                    'Current plan will take only the first generated task if the generated tasks are not a '
-                    'complete plan')
-            if curr_plan.has_task_id(tasks[0].task_id):
-                curr_plan.replace_task(tasks[0])
-            else:
-                curr_plan.append_task(tasks[0])
+    try:
+        tasks_text = parse_code(text = llm_result, lang = 'json')
+        logger.info(f'tasks: {tasks_text}')
+        tasks = json5.loads(tasks_text)
+        tasks = [Task(**task) for task in tasks]
+        if curr_plan is None:
+            if user_request is None:
+                raise RuntimeError
+            new_plan = Plan(goal=user_request)
+            new_plan.add_tasks(tasks=tasks)
+            return new_plan, True
         else:
-            curr_plan.add_tasks(tasks)
-        return curr_plan, (len(tasks) >= 1)
+            if len(tasks) == 1 or tasks[0].dependent_task_ids:
+                if tasks[0].dependent_task_ids and len(tasks) > 1:
+                    logger.warning(
+                        'Current plan will take only the first generated task if the generated tasks are not a '
+                        'complete plan')
+                if curr_plan.has_task_id(tasks[0].task_id):
+                    curr_plan.replace_task(tasks[0])
+                else:
+                    curr_plan.append_task(tasks[0])
+            else:
+                curr_plan.add_tasks(tasks)
+            return curr_plan, (len(tasks) >= 1)
+    except:
+        return Plan(), False
 
 def dump_plan_description(plan: Plan, as_prompt = True) -> str:
     tasks = plan.tasks

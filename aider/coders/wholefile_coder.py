@@ -196,7 +196,7 @@ class WholeFileCoder(Coder):
         else:
             output = ["```"] + new_lines + ["```"]
 
-        return 
+        return output
         
 def coder_run_command_io_output(commands):
     backticks = "```"
