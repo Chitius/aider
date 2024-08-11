@@ -45,7 +45,12 @@ class WholeFileCoder(Coder):
         output = []              # 维护了模型的输出中不属于 code 的那部分代码 (即 fences 之外的内容) 
         lines = content.splitlines(keepends=True)    # 内置函数 splitlines 把字符串按照换行符进行分割，并返回一个列表
 
+        # 删除末尾的所有空行
+        while lines and lines[-1] == "\n":
+            lines.pop()
+
         edits = []
+        commands = []
 
         saw_fname = None
         fname = None             # 文件名
@@ -58,14 +63,21 @@ class WholeFileCoder(Coder):
                     # 此时只可能是块的结束. 因此块的内容已经齐全，需要 apply 编辑操作.
                     saw_fname = None
 
-                    full_path = self.abs_root_path(fname)
-
-                    if mode == "diff":
-                        # diff 模式下，直接调用 do_live_diff 函数来生成代码块的 diff 信息, 直接添加到 output 中.
-                        output += self.do_live_diff(full_path, new_lines, True)
+                    if fname.lower().strip() == "command":
+                        if mode == "diff":
+                            output += coder_run_command_io_output(new_lines)
+                        else:
+                            # 将 block 的内容和文件名添加到待编辑文件列表
+                            commands.append(("command", fname_source, new_lines))   
                     else:
-                        # 将 block 的内容和文件名添加到待编辑文件列表
-                        edits.append((fname, fname_source, new_lines))   
+                        full_path = self.abs_root_path(fname)
+
+                        if mode == "diff":
+                            # diff 模式下，直接调用 do_live_diff 函数来生成代码块的 diff 信息, 直接添加到 output 中.
+                            output += self.do_live_diff(full_path, new_lines, True)
+                        else:
+                            # 将 block 的内容和文件名添加到待编辑文件列表
+                            edits.append((fname, fname_source, new_lines))   
 
                     fname = None
                     fname_source = None
@@ -74,7 +86,7 @@ class WholeFileCoder(Coder):
 
                 # 如果遇到了 fence 但尚不存在在跟踪的文件, 则说明是新块. 
 
-                if i > 0:
+                if i > 0 and i < len(lines) - 2:
                     # 遇到一个新块时，在当前行的上一行中探测文件名
                     fname_source = "block"
                     fname = lines[i - 1].strip()
@@ -85,7 +97,9 @@ class WholeFileCoder(Coder):
                     # Did gpt prepend a bogus dir? It especially likes to
                     # include the path/to prefix from the one-shot example in
                     # the prompt.
-                    if fname and fname not in chat_files and Path(fname).name in chat_files:
+                    if fname.lower().strip() == "command":
+                        pass
+                    elif fname and fname not in chat_files and Path(fname).name in chat_files:
                         # 对文件名进行一定程度上的修正，防止幻觉.
                         fname = Path(fname).name
 
@@ -96,13 +110,16 @@ class WholeFileCoder(Coder):
                     #    此来源标注为 `saw`。
                     # 2. 由于当前对话中只添加了唯一一个文件，所以模型想当然地省略了文件名.
                     #    这也很容易判断和补救. 此来源标注为 `chat`
-                    # 3. 就是完全忘了, 我们也没法补救, 那只能 raise error 了.
+                    # 3. 并不是忘了，而是模型抽风导致在末尾输出了 ```. 这时候简单的判断当前行是否是最后两行就行。
+                    # 4. 就是完全忘了, 我们也没法补救, 那只能 raise error 了.
                     if saw_fname:
                         fname = saw_fname
                         fname_source = "saw"
                     elif len(chat_files) == 1:
                         fname = chat_files[0]
                         fname_source = "chat"
+                    elif i == len(lines) - 1:
+                        fname = None
                     else:
                         # TODO: sense which file it is by diff size
                         raise ValueError(
@@ -126,7 +143,7 @@ class WholeFileCoder(Coder):
                 output.append(line)
 
         if mode == "diff":
-            if fname is not None:
+            if fname is not None and fname.lower().strip() != "command":
                 # ending an existing block
                 full_path = (Path(self.root) / fname).absolute()
                 output += self.do_live_diff(full_path, new_lines, False)
@@ -135,7 +152,10 @@ class WholeFileCoder(Coder):
         if fname:
             # 【围栏二】: 如果 LLM 的最后一个 block 忘了加 ending block, 则这里相当于帮他加上.
             # TODO: 我遇到了 qwen2 在输出末尾添加 ``` 的情况，导致自动生成一个空的 code block. 这里可能需要加一个判断.
-            edits.append((fname, fname_source, new_lines))
+            if fname.lower().strip() != "command":
+                edits.append((fname, fname_source, new_lines))
+            else:
+                commands.append(("command", fname_source, new_lines))
 
         seen = set()
         refined_edits = []
@@ -152,6 +172,8 @@ class WholeFileCoder(Coder):
 
                 seen.add(fname)
                 refined_edits.append((fname, fname_source, new_lines))
+
+        refined_edits.extend(commands)
 
         return refined_edits
 
@@ -174,4 +196,9 @@ class WholeFileCoder(Coder):
         else:
             output = ["```"] + new_lines + ["```"]
 
-        return output
+        return 
+        
+def coder_run_command_io_output(commands):
+    backticks = "```"
+    output = [f"{backticks}bash", "\n".join(commands), backticks]
+    return output

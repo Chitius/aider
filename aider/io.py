@@ -13,6 +13,9 @@ from pygments.util import ClassNotFound
 from rich.console import Console
 from rich.text import Text
 from termcolor import colored
+import sys
+sys.path.append("/home/admin/workspace/playground/modelscope-agent")
+from modelscope_agent.schemas import CodeCell, Plan, Task, TaskResult
 
 from .dump import dump  # noqa: F401
 from .utils import is_image_file
@@ -250,6 +253,46 @@ class InputOutput:
             # self.console.print(*messages, **style)
             for message in messages:
                 print(colored(message, self.tool_output_color))
+
+    def critic_output(self, suggestions: str):
+        base_color = "light_yellow"
+        suggestions_color = "light_cyan"
+
+        output = colored("\nSELF-REFLECTION: ", base_color)
+        output += colored(suggestions, suggestions_color)
+        output += "\n"
+
+        print(output)
+
+
+    def plan_output(self, plan: Plan):
+        tasks = plan.tasks
+
+        base_color = "light_cyan"
+        curr_color = "light_yellow"
+
+        output = colored("\nPlan:\n\n", base_color)
+        curr_id = plan.current_task_id
+        for task in tasks:
+            line = ""
+            
+            if task.task_id == curr_id:
+                color = curr_color
+                prefix = "-> " 
+            else:
+                color = base_color
+                prefix = " - "
+
+            line += prefix + f"Task {task.task_id}"
+
+            if task.is_finished:
+                line += " (completed)"
+
+            line += f": {task.instruction} \n"
+
+            output += colored(line, color)
+            
+        print(output)
 
     def append_chat_history(self, text, linebreak=False, blockquote=False, strip=True):
         if blockquote:

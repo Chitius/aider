@@ -102,19 +102,8 @@ class ChatSummary:
             if not content.endswith("\n"):
                 content += "\n"
 
-<<<<<<< HEAD
-        messages = [
-            dict(role="system", content=prompts.summarize[self.language]),
-            dict(role="user", content=content),
-        ]
-
-        summary = simple_send_with_retries(self.model.name, messages)
-        if summary is None:
-            raise ValueError(f"summarizer unexpectedly failed for {self.model.name}")
-        summary = prompts.summary_prefix[self.language] + summary
-=======
         summarize_messages = [
-            dict(role="system", content=prompts.summarize),
+            dict(role="system", content=prompts.summarize[self.language]),
             dict(role="user", content=content),
         ]
 
@@ -122,11 +111,10 @@ class ChatSummary:
             try:
                 summary = simple_send_with_retries(model.name, summarize_messages)
                 if summary is not None:
-                    summary = prompts.summary_prefix + summary
+                    summary = prompts.summary_prefix[self.language] + summary
                     return [dict(role="user", content=summary)]
             except Exception as e:
                 print(f"Summarization failed for model {model.name}: {str(e)}")
->>>>>>> main
 
         raise ValueError("summarizer unexpectedly failed for all models")
 

@@ -5,6 +5,7 @@ import sys
 sys.path.append("/home/admin/workspace/playground/aider")
 import threading
 from pathlib import Path
+from pprint import pprint
 
 import git
 from dotenv import load_dotenv
@@ -13,6 +14,7 @@ from prompt_toolkit.enums import EditingMode
 from aider import __version__, models, utils
 from aider.args import get_parser
 from aider.coders import Coder
+from aider.planner import DAGPlanner
 from aider.commands import Commands, SwitchCoder
 from aider.history import ChatSummary
 from aider.io import InputOutput
@@ -338,14 +340,15 @@ def register_litellm_models(git_root, model_metadata_fname, io, verbose=False):
 def main(
         user_config = None, input = None, output = None, force_git_root = None, return_coder = False,
         edit_format: Literal["whole", "diff", "diff-fenced", "udiff", "help"] = "whole",
-        language = "zh"
+        language = "en"
     ):
 
     if user_config is None:
-        print("[chuan] using temporarily enforced configs: ", end = "")
+        print("using temporarily enforced configs: ", end = "")
         user_config = []
-        user_config += ['--model', 'openai/qwen2']
+        user_config += ['--model', 'openai/Qwen2-72B-Instruct']
         user_config += ['--stream', 'false']
+        user_config += ['--yes']
         user_config += ['--model-settings-file', '/home/admin/workspace/playground/.aider.model.settings.yml']
         print(" ".join(user_config))
     raw_user_config = user_config
@@ -455,9 +458,9 @@ def main(
         if right_repo_root:
             return main(user_config, input, output, right_repo_root, return_coder=return_coder)
 
-    if args.just_check_update:
-        update_available = check_version(io, just_check=True)
-        return 0 if not update_available else 1
+    # if args.just_check_update:
+    #     update_available = check_version(io, just_check=True)
+    #     return 0 if not update_available else 1
 
     if args.check_update:
         check_version(io)
@@ -535,6 +538,17 @@ def main(
         args.max_chat_history_tokens or main_model.max_chat_history_tokens,
     )
 
+    # 添加 planner
+    llm_config = {
+        "model": args.model.split('/')[-1], 
+        "model_server": "openai",
+        "api_base": args.openai_api_base,
+        "api_key": "EMPTY",
+        "support_fn_call": False,
+        "is_function_call": False
+    }
+    planner = DAGPlanner(llm = llm_config, do_log = False)
+
     try:
         coder = Coder.create(
             main_model=main_model,
@@ -560,6 +574,7 @@ def main(
             test_cmd=args.test_cmd,
             commands=commands,
             summarizer=summarizer,
+            planner=planner,
             language=language
         )
 
@@ -655,14 +670,89 @@ def main(
     thread.daemon = True
     thread.start()
 
+    # pprint(args)
     while True:
         try:
             coder.run()
+            print("coder.run() done!")
             return
         except SwitchCoder as switch:
             coder = Coder.create(io=io, from_coder=coder, **switch.kwargs)
             coder.show_announcements()
 
+"""
+args in the end when I start aider under /home/admin/workspace/playground/small_repos/snake2:
+
+Namespace(
+    files=['false'], 
+    openai_api_key='EMPTY', 
+    anthropic_api_key=None, 
+    model='openai/Qwen2-72B-Instruct', 
+    models=None, 
+    openai_api_base='http://127.0.0.1:2072', 
+    openai_api_type=None, 
+    openai_api_version=None, 
+    openai_api_deployment_id=None, 
+    openai_organization_id=None, 
+    model_settings_file='/home/admin/workspace/playground/.aider.model.settings.yml', 
+    model_metadata_file='.aider.model.metadata.json', 
+    verify_ssl=True, 
+    edit_format=None, 
+    weak_model=None, 
+    show_model_warnings=True, 
+    map_tokens=None, 
+    max_chat_history_tokens=None, 
+    env_file='/home/admin/workspace/playground/small_repos/snake2/.env', 
+    input_history_file='/home/admin/workspace/playground/small_repos/snake2/.aider.input.history', 
+    chat_history_file='/home/admin/workspace/playground/small_repos/snake2/.aider.chat.history.md', 
+    restore_chat_history=False, 
+    llm_history_file=None, 
+    dark_mode=False, 
+    light_mode=False, 
+    pretty=True, 
+    stream=True, 
+    user_input_color='light_green', 
+    tool_output_color=None, 
+    tool_error_color='light_red', 
+    assistant_output_color='light_blue', 
+    code_theme='white', 
+    show_diffs=False, 
+    git=True, 
+    gitignore=True, 
+    aiderignore='/home/admin/workspace/playground/small_repos/snake2/.aiderignore', 
+    subtree_only=False, 
+    auto_commits=True, 
+    dirty_commits=True, 
+    attribute_author=True, 
+    attribute_committer=True, 
+    attribute_commit_message=False, 
+    commit=False, 
+    commit_prompt=None, 
+    dry_run=False, 
+    lint=False, 
+    lint_cmd=[], 
+    auto_lint=True, 
+    test_cmd=[], 
+    auto_test=False, 
+    test=False, 
+    file=None, 
+    vim=False, 
+    voice_language='en', 
+    just_check_update=False, 
+    check_update=True, 
+    apply=None, 
+    yes=None, 
+    verbose=False, 
+    show_repo_map=False, 
+    show_prompts=False, 
+    exit=False, 
+    message=None, 
+    message_file=None, 
+    encoding='utf-8', 
+    config=None, 
+    gui=False
+)
+"""
 
 def load_slow_imports():
     # These imports are deferred in various ways to

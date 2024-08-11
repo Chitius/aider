@@ -33,7 +33,6 @@ undo_command_reply = {
     )
 }
 
-<<<<<<< HEAD
 added_files = {
     "en": """I added these files to the chat: {fnames}.
 
@@ -43,11 +42,6 @@ If you need to propose edits to other existing files not already added to the ch
 如果您需要对其他未加入对话的文件进行编辑, 您 *必须* 告诉我它们的完整路径名称, 并要求我 *将文件添加到对话中*. 结束您的回复并等待我的批准. 如果您需要编辑更多文件, 您可以继续询问.
 """
 }
-=======
-added_files = (
-    "I added these files to the chat: {fnames}\nLet me know if there are others we should add."
-)
->>>>>>> main
 
 
 run_output = {

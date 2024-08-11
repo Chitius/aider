@@ -16,6 +16,7 @@ from collections import defaultdict
 from datetime import datetime
 from json.decoder import JSONDecodeError
 from pathlib import Path
+from langchain_community.tools import ShellTool
 
 import git
 from rich.console import Console, Text
@@ -32,6 +33,8 @@ from aider.repo import GitRepo
 from aider.repomap import RepoMap
 from aider.sendchat import send_with_retries
 from aider.utils import format_content, format_messages, is_image_file
+from aider.planner import DAGPlanner, dump_plan_description, update_plan, Plan, TaskResult, is_all_task_done
+from aider.critic import CriticAgent, extract_suggestion
 
 from typing import *
 from ..dump import dump  # noqa: F401
@@ -216,6 +219,8 @@ class Coder:
         map_mul_no_files=8,
         commands=None,
         summarizer=None,
+        planner=None,
+        critic=None,
         total_cost=0.0,
         language="en",
     ):
@@ -252,6 +257,8 @@ class Coder:
 
         self.verbose = verbose
         self.abs_fnames = set()
+
+        self.shell_runner = ShellTool()
 
         if cur_messages:
             self.cur_messages = cur_messages
@@ -358,6 +365,17 @@ class Coder:
             self.main_model.max_chat_history_tokens,
             self.language
         )
+
+        llm_config = {
+            "model": main_model.weak_model.name.split('/')[-1], 
+            "model_server": main_model.weak_model.name.split('/')[0],
+            "api_base": os.environ["OPENAI_API_BASE"],
+            "api_key": "EMPTY",
+            "support_fn_call": False,
+            "is_function_call": False
+        }
+        self.planner = planner or DAGPlanner(llm = llm_config, do_log = False)
+        self.critic = critic or CriticAgent(llm = llm_config, do_log = False)
 
         self.summarizer_thread = None
         self.summarized_done_messages = []
@@ -700,6 +718,9 @@ class Coder:
         self.test_outcome = None
         self.edit_outcome = None
 
+        self.curr_plan: Plan = None
+        self.goal: str = None
+
     def run(self, with_message = None):
         """
         Agent 运行的入口.
@@ -741,12 +762,37 @@ class Coder:
                     # 否则获取用户输入的消息, 其中还涉及处理用户的指令, 例如 /add
                     new_user_message = self.run_loop()  
 
-                while new_user_message:
-                    self.reflected_message = None
+                if new_user_message:
+                    self.goal = new_user_message
+                    self.curr_plan: Plan = None
+                else:
+                    continue
+
+                self.reflected_message = None
+                self.num_reflections = 0
+
+                while True:   
+                    # 首先初始化 plan 或更新 plan
+                    planner_prompt = ""
+                    if not self.curr_plan:
+                        planner_prompt = self.goal
+                        extra_msgs = self.get_files_messages()
+                        planner_output = self.planner.run(planner_prompt, mid_messages = extra_msgs)
+                        self.curr_plan, _ = update_plan(planner_output, self.goal, self.curr_plan)
+
+                    # planner_output = self.planner.run(planner_prompt)
+                    # self.curr_plan, plan_changed = update_plan(planner_output, self.goal, self.curr_plan)
+                    # if (not plan_changed) and is_all_task_done(self.curr_plan):
+                    #     break
 
                     # 【核心函数】
                     # 每次接收到用户的请求后，都调用一次本函数来获取并处理模型输出，包括文件编辑和自动提交. 此函数调用一次过程中，也只涉及一轮和 LLM 的沟通.
-                    list(self.send_new_user_message(new_user_message)) 
+                    self.io.plan_output(self.curr_plan)
+
+                    if is_all_task_done(self.curr_plan):
+                        break
+                    
+                    list(self.send_new_user_message(dump_plan_description(self.curr_plan))) 
 
                     new_user_message = None
                     if self.reflected_message:
@@ -757,14 +803,52 @@ class Coder:
                             # {user: <反思信息>}
                             # 的 message 来要求 LLM 进行进一步的编辑.
                             self.num_reflections += 1
-                            new_user_message = self.reflected_message  
+                            # new_user_message = self.reflected_message  ≥
+                            task_result = TaskResult(code = "", result = self.reflected_message, is_success = False)
+                            self.curr_plan.current_task.update_task_result(task_result)
+
                         else:
                             self.io.tool_error(
                                 f"Only {self.max_reflections} reflections allowed, stopping."
                             )  
+                            task_result = TaskResult(code = "success", result = self.reflected_message, is_success = True)
+                            self.curr_plan.current_task.update_task_result(task_result)
+                            self.curr_plan.finish_current_task()
+                    else:
+                        if (self.curr_plan.current_task.task_type.lower().strip() == "reason"):
+                            self.reflected_message = self.io.get_input(self.commands) 
+                            task_result = TaskResult(code = "success", result = self.reflected_message, is_success = True)
+                            self.curr_plan.current_task.update_task_result(task_result)
+                            self.curr_plan.finish_current_task()
+                        else:
+                            critic_prompt = dump_plan_description(self.curr_plan, as_prompt = False) + "\n\n"
+                            critic_prompt + (
+                                "The above are my goal and plan for it, which may not be perfect. "
+                                "The following are the actions I have taken to complete the current task, which "
+                                "may include my editing of existing code and providing complete new code.\n\n"
+                            )
+                            critic_prompt += self.partial_response_content
+                            extra_msgs = self.get_files_messages()
+                            critic_message = self.critic.run(critic_prompt, mid_messages = extra_msgs)
+                            try:
+                                suggestions, can_pass = extract_suggestion(critic_message)
+                            except:
+                                can_pass = ("ok" in critic_message.lower())
+                                suggestions = critic_message.strip()
+                            if can_pass:
+                                task_result = TaskResult(code = "success", result = "", is_success = True)
+                                self.curr_plan.current_task.update_task_result(task_result)
+                                self.curr_plan.finish_current_task()
+                            else:
+                                self.io.critic_output(suggestions)
+                                task_result = TaskResult(code = "", result = "User suggestions: " + suggestions, is_success = False)
+                                self.curr_plan.current_task.update_task_result(task_result)
 
-                    # 注意！反思过程不会对 self.self.partial_response_content 和 self.partial_response_function_call 这些中间缓存做任何修改！
-                    # TODO: 该研究 partial 和 multi 在这里的区别了.
+                        self.num_reflections = 0
+
+                    self.reflected_message = None
+
+                # 注意！反思过程不会对 self.self.partial_response_content 和 self.partial_response_function_call 这些中间缓存做任何修改！
 
                 if with_message:
                     # 如果调用时自带 message, 说明是单轮对话，需要直接返回响应.
@@ -772,7 +856,8 @@ class Coder:
 
             except KeyboardInterrupt:
                 self.keyboard_interrupt()  # 捕获键盘中断异常，进行相应处理
-            except EOFError:
+            except EOFError as e:
+                print("EOF: ", e)
                 return  # 捕获EOFError，结束循环
 
     def run_loop(self):
@@ -870,6 +955,12 @@ class Coder:
         """
         self.done_messages += self.cur_messages
         self.summarize_start()
+
+        # 寻找最后一条 role = "user" 的信息
+        for i in range(len(self.done_messages) - 1, -1, -1):
+            if self.done_messages[i]["role"] == "user":
+                self.done_messages[i]["content"] = self.curr_plan.current_task.instruction
+                break
 
         # TODO check for impact on image messages
         if message:
@@ -1185,7 +1276,7 @@ class Coder:
 
         # 从 LLM 响应中提取代码块编辑信息, 并将它们应用于本地代码 (但不进行 git commit), 并在控制台告知用户。
         # 返回一个包含了所有发生编辑操作了的文件的文件名组成的集合。
-        edited: Set[str] = self.apply_updates()   
+        edited, commands = self.apply_updates()   
 
         if self.reflected_message:
             # 如果编辑操作中遇到了报错，则先不进行自动提交, 直接返回.
@@ -1239,6 +1330,17 @@ class Coder:
                 self.reflected_message += "\n\n" + add_rel_files_message
             else:
                 self.reflected_message = add_rel_files_message
+
+        commands_outputs = self.run_shell_commands(commands)
+        if commands:
+            for i in range(len(commands)):
+                command = commands[i]
+                cm_result = commands_outputs[i]
+                if self.reflected_message:
+                    self.reflected_message += "\n\n" + f"command `{command}` yield the following result:\n```\n" + cm_result + "\n```\n"
+                else:
+                    self.reflected_message = f"command `{command}` yield the following result:\n```\n" + cm_result + "\n```\n"
+
 
     def show_exhausted_error(self):
         output_tokens = 0
@@ -1489,6 +1591,7 @@ class Coder:
         # 此函数相当于直接调用 self.get_edits(mode="diff"), 做的事情是将 self.get_multi_response_content()
         # 中的代码编辑操作进行解析, 然后返回若干个 (文件名, 代码块的来源, 代码块内容的 diff 信息) 组成的三元组.
         show_resp = self.render_incremental_response(True)
+
         if self.show_pretty():
             if self.assistant_output_color == "light_blue":
                 use_color_hex = "#0088ff"
@@ -1755,22 +1858,33 @@ class Coder:
 
         return res
 
-    def update_files(self) -> Set[str]:
+    def update_files(self) -> Tuple[Set[str], List[str]]:
         """ 从 LLM 响应中提取代码块编辑信息, 并将它们应用于本地代码 (但不进行 git commit). 
             最后返回一个包含了所有发生编辑操作了的文件的文件名组成的集合。 """
-        edits = self.get_edits()    # 从 LLM 响应中提取代码块编辑信息并以三元组组成的列表的形式返回. 具体参考 wholefile_coder.py 中的注释。
+        
+        raw_edits = self.get_edits()  # 从 LLM 响应中提取代码块编辑信息并以三元组组成的列表的形式返回. 具体参考 wholefile_coder.py 中的注释。
+        
+        edits = [x for x in raw_edits if x[0] != "command"]
+        commands = [x for x in raw_edits if x[0] == "command"]
+
         edits = self.prepare_to_edit(edits)   # 向用户征求许可, 过滤掉不被许可的编辑
         self.apply_edits(edits)     # 将编辑应用到本地文件. 具体参考 wholefile_coder.py 中的注释。就是很简单的 write_text 调用.
-        return set(edit[0] for edit in edits)
+        return set(edit[0] for edit in edits), [x[-1] for x in commands]
 
-    def apply_updates(self) -> Set[str]:
+    def run_shell_commands(self, commands):
+        output = []
+        for command in commands:
+            output.append(self.shell_runner.run("\n".join(command)))
+        return output
+
+    def apply_updates(self) -> Tuple[Set[str], List[str]]:
         """ 
         从 LLM 响应中提取代码块编辑信息, 并将它们应用于本地代码 (但不进行 git commit), 并在控制台告知用户。
         最后返回一个包含了所有发生编辑操作了的文件的文件名组成的集合。
         如果上述操作遇到错误，会把报错信息放到反思信息 self.reflected_message 中, 后续会让模型进行迭代.
         """
         try:
-            edited = self.update_files()
+            edited, commands = self.update_files()
         except ValueError as err:
             self.num_malformed_responses += 1
 
@@ -1782,11 +1896,11 @@ class Coder:
             self.io.tool_error(str(err), strip=False)
 
             self.reflected_message = str(err)
-            return
+            return None, None
 
         except git.exc.GitCommandError as err:
             self.io.tool_error(str(err))
-            return
+            return None, None
         except Exception as err:
             self.io.tool_error("Exception while updating files:")
             self.io.tool_error(str(err), strip=False)
@@ -1794,7 +1908,7 @@ class Coder:
             traceback.print_exc()
 
             self.reflected_message = str(err)
-            return
+            return None, None
 
         for path in edited:
             if self.dry_run:
@@ -1802,7 +1916,7 @@ class Coder:
             else:
                 self.io.tool_output(f"Applied edit to {path}")
 
-        return edited
+        return edited, commands
 
     def parse_partial_args(self):
         # dump(self.partial_response_function_call)
