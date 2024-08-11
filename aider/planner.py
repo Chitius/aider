@@ -25,6 +25,10 @@ KNOWLEDGE_TEMPLATE_ZH = """
 
 """
 
+# - **reflect**: reflect on previous task results, and do the rest work to make sure to achieve the goal.
+
+# **The final task must be a reflect task.**
+
 PROMPT_TEMPLATE_ZH = """
 {role_prompt}
 
@@ -32,15 +36,11 @@ PROMPT_TEMPLATE_ZH = """
 - **user**: Ask user for more details until you have enough information to plan a task.
 - **reason**: Speak to user when no more coding work is needed to be done. Usually as a final task.
 - **code**: Write a piece of code to achieve one specific goal.
-- **run**: run shell commands to achieve one specific goal.
-- **reflect**: reflect on previous task results, and do the rest work to make sure to achieve the goal.
 - **other**: Any tasks not in the defined categories
 
 # Task:
 Based on the user's goal or the user's existing plan, write a simple plan or modify the existing plan of what you should do \
 to achieve the goal. A complete plan consists of one to four tasks. The number of tasks CANNOT exceed 6.
-
-**The final task must be a reflect task.**
 
 Output a list of jsons following the format:
 ```json

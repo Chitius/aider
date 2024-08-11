@@ -441,7 +441,8 @@ def find_original_update_blocks(content, fence=DEFAULT_FENCE):
             if updated_marker.strip() != UPDATED:
                 raise ValueError(f"Expected `{UPDATED}` not `{updated_marker.strip()}")
 
-            yield filename, original_text, updated_text
+            if original_text.strip() or updated_text.strip():
+                yield filename, original_text, updated_text
     except ValueError as e:
         processed = "".join(processed)
         err = e.args[0]

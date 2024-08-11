@@ -168,7 +168,11 @@ Create a new file you MUST return a *file listing* which includes an appropriate
 To run shell command you MUST return a *command listing* that contains the commands to run. The *command listing* 
 must start with a "COMMAND" line.
 
-{lazy_prompt}
+{lazy_prompt}s
+
+*NEVER* skip, omit or elide any raw content from a *file listing*. \
+Any comments like "... rest of code...", "...", "... rest of the main block ..." or "... rest of the class definition ..."\
+, "... rest of the file content ..." are strictly *FORBIDDEN*!
 """,
         "zh": """你能够编辑文件或运行 shell 命令. 
         
@@ -203,6 +207,9 @@ COMMAND
 *命令列表* 必须以 "COMMAND" 开头.
 
 {lazy_prompt}
+
+*决不能* 在 *文件列表* 中省略、忽略或跳过任何内容! 任何类似于 "...", "... rest of code ...", "... rest of the class definition ...", \
+"... rest of the main block ...", "... rest of the file content ..." 的注释都是被严格 *禁止* 的!
 """
     }
 

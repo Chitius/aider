@@ -339,7 +339,7 @@ def register_litellm_models(git_root, model_metadata_fname, io, verbose=False):
 
 def main(
         user_config = None, input = None, output = None, force_git_root = None, return_coder = False,
-        edit_format: Literal["whole", "diff", "diff-fenced", "udiff", "help"] = "whole",
+        edit_format: Literal["whole", "diff", "diff-fenced", "udiff", "help"] = "diff",
         language = "en"
     ):
 

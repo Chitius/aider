@@ -34,12 +34,14 @@ Based on the user's current task and the actions taken to achieve the task, dete
 If the user is on his/her last task, you should consider the problem from a global perspective, \
 consider whether the user's current series of behaviors are sufficient to satisfactorily achieve their optimal goals, and provide appropriate suggestions.
 
+If the user skip, omit or elide any code content in his edition, you must suggest to the user not to skip the missing code content.
+
 Output a json following the format:
 ```json
 {{
     "pass": str = "OK" if you believe that the user's behavior has satisfactorily met the requirement, otherwise "HOLD",
     "suggestions": str = "Suggestions for users consisting of one to two sentences should be concise and have substance",
-}},
+}}
 ```
 """
 
