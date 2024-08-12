@@ -33,14 +33,18 @@ PROMPT_TEMPLATE_ZH = """
 {role_prompt}
 
 # Available Task Types:
-- **user**: Ask user for more details until you have enough information to plan a task.
 - **reason**: Speak to user when no more coding work is needed to be done. Usually as a final task.
 - **code**: Write a piece of code to achieve one specific goal.
 - **other**: Any tasks not in the defined categories
 
 # Task:
-Based on the user's goal or the user's existing plan, write a simple plan or modify the existing plan of what you should do \
-to achieve the goal. A complete plan consists of one to four tasks. The number of tasks CANNOT exceed 6.
+Based on the user's goal, write a plan of what you should do to achieve the goal. \
+The plan should cover all user needs, and should be kept concise and not overly detailed.
+
+Do not use transitional words such as 'first', 'then', or 'last' in the instruction, \
+as the order relationship has already been described using task_id. 
+
+A complete plan consists of one to four tasks. The number of tasks CANNOT exceed 4.
 
 Output a list of jsons following the format:
 ```json
@@ -48,9 +52,7 @@ Output a list of jsons following the format:
     {{
         "task_id": str = "unique identifier for a task in plan, can be an ordinal",
         "dependent_task_ids": list[str] = "ids of tasks prerequisite to this task",
-        "instruction": "what you should do in this task, composed of two to three imperative sentences. \
-Do not use transitional words such as 'first', 'then', or 'last' in the description, \
-as the order relationship has already been described using task_id.",
+        "instruction": "what you should do in this task, composed of one to two imperative sentences",
         "task_type": "type of this task, should be one of Available Task Types",
     }},
     ...

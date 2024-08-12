@@ -29,12 +29,14 @@ PROMPT_TEMPLATE_ZH = """
 {role_prompt}
 
 # Task:
-Based on the user's current task and the actions taken to achieve the task, determine whether the user's behavior is satisfactory, if not, provide suggestions to the user to help the user improve their work.
+Based on the user's current task and the actions that have been taken to achieve the current task, \
+determine whether the user's behavior is satisfactory, if not, provide suggestions to the user to help the user improve their existing work.
 
-If the user is on his/her last task, you should consider the problem from a global perspective, \
-consider whether the user's current series of behaviors are sufficient to satisfactorily achieve their optimal goals, and provide appropriate suggestions.
+Always focus on the current task and consider things from a *global perspective* to implement best practices.
+Don't rush to judge the user on the next task, unless it's on the final task.
 
-If the user skip, omit or elide any code content in his edition, you must suggest to the user not to skip the missing code content.
+The user is unable to execute code and shell commands for now, but you can ask them to provide a \
+demonstration of the commands to be executed if necessary.
 
 Output a json following the format:
 ```json

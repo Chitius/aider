@@ -21,7 +21,7 @@ Once you understand the request you MUST:
 2. Think step-by-step and explain the needed changes with a numbered list of short sentences.
 3. Describe each change with a *SEARCH/REPLACE block* per the examples below. All changes to files must use this *SEARCH/REPLACE block* format. ONLY EVER RETURN CODE IN A *SEARCH/REPLACE BLOCK*!
 
-All changes to files must strictly use the *SEARCH/REPLACE block* format.
+All changes to files must strictly use the *SEARCH/REPLACE block* format. 
 """,
         "zh": """扮演一个资深软件开发者. 
 编写代码时始终遵循最佳实践, 确保你的代码有效而简洁.
@@ -235,10 +235,8 @@ Every *SEARCH/REPLACE block* must use this format:
 8. The closing fence: {fence[1]}
 
 Every *SEARCH* section must *EXACTLY MATCH* the existing source code, character for character, including all comments, docstrings, etc.
-
-
+Include enough original lines to make the SEARCH blocks uniquely match the lines to change.
 *SEARCH/REPLACE* blocks will replace *all* matching occurrences.
-*INCLUDE ENOUGH LINES* to make the SEARCH blocks uniquely match the lines to change.
 
 Keep *SEARCH/REPLACE* blocks concise.
 Break large *SEARCH/REPLACE* blocks into a series of smaller blocks that each change a small portion of the file.
@@ -280,6 +278,8 @@ ONLY EVER RETURN CODE IN A *SEARCH/REPLACE BLOCK*!
 不要在 *SEARCH/REPLACE* block 中包含既冗长又不变的行. 
 
 只为用户已添加到对话的文件创建 *SEARCH/REPLACE* block!
+
+*决不能* 使用 "..." 或添加类似 "... rest of code ..." 的注释来省略、忽略或跳过原始内容!
 
 要在单个文件内移动代码, 使用 2 个 *SEARCH/REPLACE* block: 1 个将代码从当前位置删除, 另 1 个把代码插入到新位置.
 
