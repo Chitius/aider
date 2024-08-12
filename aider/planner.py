@@ -40,7 +40,7 @@ PROMPT_TEMPLATE_ZH = """
 
 # Task:
 Based on the user's goal or the user's existing plan, write a simple plan or modify the existing plan of what you should do \
-to achieve the goal. A complete plan consists of one to four tasks. The number of tasks CANNOT exceed 6.
+to achieve the goal. A complete plan consists of one to three tasks. The number of tasks CANNOT exceed 3.
 
 Output a list of jsons following the format:
 ```json

@@ -34,7 +34,8 @@ Based on the user's current task and the actions taken to achieve the task, dete
 If the user is on his/her last task, you should consider the problem from a global perspective, \
 consider whether the user's current series of behaviors are sufficient to satisfactorily achieve their optimal goals, and provide appropriate suggestions.
 
-If the user skip, omit or elide any code content in his edition, you must suggest to the user not to skip the missing code content.
+The user may use a *SEARCH/REPLACE* format for coding. In this case, pay attention to the REPLACE block rather than SEARCH block.
+REPLACE block contains the new version, while SEARCH block contains the old version.
 
 Output a json following the format:
 ```json
